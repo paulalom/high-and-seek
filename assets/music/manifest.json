@@ -1,0 +1,203 @@
+{
+  "bpm": 88,
+  "bars": 24,
+  "beats": 96,
+  "original": true,
+  "sections": [
+    "Invitation",
+    "Night walk",
+    "Homeward reprise"
+  ],
+  "progression": [
+    "Cmaj9",
+    "Am9",
+    "Dm9",
+    "G13",
+    "Cmaj9",
+    "Fmaj9",
+    "Dm9",
+    "G13",
+    "Fmaj9",
+    "Em7",
+    "Am9",
+    "Dm9",
+    "Fmaj9",
+    "Cmaj9/E",
+    "Dm9",
+    "G13",
+    "Cmaj9",
+    "Am9",
+    "Fmaj9",
+    "G13",
+    "Em7",
+    "Am9",
+    "Dm9",
+    "G13"
+  ],
+  "arrangement": {
+    "lounge": "Warm Rhodes, syncopated electric bass, brushed funk, bell motif.",
+    "snack": "Pizzicato bossa chords, marimba replies, shaker and soft bass.",
+    "upstairs": "Cocktail jazz: Rhodes comping, upright bass and muted trumpet.",
+    "midnight": "Pad-and-bell bed only; no bass, percussion or drums.",
+    "midnight-rhythm": "Complementary spacious bass and restrained drums only.",
+    "tension": "Subtle bell ostinato and dry ticks over shared harmony.",
+    "conversation": "Polite elevator-jazz interruption with marimba replies.",
+    "couch": "Warm nylon-guitar and Rhodes reprise of the recurring motif."
+  },
+  "midnight_combined_unity_peak": 0.572253,
+  "midnight_combined_unity_rms": 0.096461,
+  "loops": [
+    {
+      "file": "lounge.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.095,
+      "peak": 0.576141,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.101273,
+        0.078843,
+        0.102968
+      ],
+      "unique_bars": 24,
+      "sha256": "c3a2cf872f5d5575e320c604da60d431e7076d0b0a6dbf20e0fa013ecc2fab5f"
+    },
+    {
+      "file": "snack.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.094999,
+      "peak": 0.649758,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.095664,
+        0.092065,
+        0.097195
+      ],
+      "unique_bars": 24,
+      "sha256": "28b9ed59397266d41659586f28b297644783e6e6e1261b4a898f5817cc722688"
+    },
+    {
+      "file": "upstairs.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.095,
+      "peak": 0.502755,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.09857,
+        0.087907,
+        0.098139
+      ],
+      "unique_bars": 24,
+      "sha256": "7650331e53bd8db929979039d3facb6b2f42746d395b7cb7525413442ab478e8"
+    },
+    {
+      "file": "midnight.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.079999,
+      "peak": 0.506185,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.081526,
+        0.071821,
+        0.085993
+      ],
+      "unique_bars": 24,
+      "sha256": "ebdaf722544c253da8b8e22cba6dab1439dd7b28fdf0a67afa69956beb3ca76e"
+    },
+    {
+      "file": "midnight-rhythm.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.054,
+      "peak": 0.463512,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.056657,
+        0.036941,
+        0.0646
+      ],
+      "unique_bars": 24,
+      "sha256": "95cce76a803a255ed0b489797d4b9437a3572c12aefe85b9aa908349cf5cebed"
+    },
+    {
+      "file": "tension.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.042,
+      "peak": 0.176648,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.045073,
+        0.034994,
+        0.04512
+      ],
+      "unique_bars": 24,
+      "sha256": "a01fe3c6dc8ef89c6e3342cc0df2b80564888e96e325241c49c527c1eac03600"
+    },
+    {
+      "file": "conversation.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.088,
+      "peak": 0.460036,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.087665,
+        0.087654,
+        0.088677
+      ],
+      "unique_bars": 24,
+      "sha256": "1216a42d794bc4b68267bd9c488b6d3a06799b6ac0a5e5d0a9826abf7b1855f4"
+    },
+    {
+      "file": "couch.wav",
+      "frames": 1443273,
+      "sample_rate": 22050,
+      "channels": 2,
+      "duration": 65.45455782312925,
+      "bytes": 5773136,
+      "rms": 0.098,
+      "peak": 0.598665,
+      "seam_delta": 0,
+      "clipped_samples": 0,
+      "section_rms": [
+        0.094772,
+        0.097839,
+        0.10128
+      ],
+      "unique_bars": 24,
+      "sha256": "a033f7ece9093bfea8ed3327352225c3466fbc504dd997fa25cadd6bf0b773f9"
+    }
+  ]
+}

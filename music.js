@@ -1,9 +1,34 @@
-/* Original adaptive lounge music. Four synchronized loops share the game's audio context. */
+/* Original area score. Phase-matched arrangements share the game's audio clock. */
 (() => {
   'use strict';
-  const TRACKS = ['lounge', 'tension', 'conversation', 'couch'];
-  const MODES = new Set(['lounge', 'upstairs', 'conversation', 'couch', 'silent']);
+  const TRACKS = ['lounge', 'snack', 'upstairs', 'midnight', 'midnight-rhythm', 'tension', 'conversation', 'couch'];
+  const MODES = new Set(['lounge', 'snack', 'upstairs', 'midnight', 'terrace', 'conversation', 'couch', 'silent']);
+  const emptyMix = () => Object.fromEntries(TRACKS.map(id => [id, 0]));
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+
+  function decodePCM(context, bytes) {
+    // These original assets are PCM WAVs. Preserve their 22.05 kHz samples;
+    // decodeAudioData would upsample every cached loop to the output device rate.
+    const view = new DataView(bytes);
+    if (bytes.byteLength < 44 || view.getUint32(0, false) !== 0x52494646 || view.getUint32(8, false) !== 0x57415645) throw new Error('Invalid music WAV.');
+    let format, data;
+    for (let offset = 12; offset + 8 <= bytes.byteLength;) {
+      const id = view.getUint32(offset, false), size = view.getUint32(offset + 4, true), start = offset + 8;
+      if (start + size > bytes.byteLength) throw new Error('Truncated music WAV.');
+      if (id === 0x666d7420 && size >= 16) format = start;
+      if (id === 0x64617461) data = { start, size };
+      offset = start + size + (size % 2);
+    }
+    if (!format || !data || view.getUint16(format, true) !== 1 || view.getUint16(format + 14, true) !== 16) throw new Error('Music requires sixteen-bit PCM.');
+    const channels = view.getUint16(format + 2, true), rate = view.getUint32(format + 4, true);
+    if (channels !== 2 || rate !== 22050 || data.size % (channels * 2) || data.size < channels * 2 || data.size > rate * channels * 2 * 90) throw new Error('Invalid music format.');
+    const frames = data.size / (channels * 2), buffer = context.createBuffer(channels, frames, rate);
+    for (let channel = 0; channel < channels; channel++) {
+      const samples = buffer.getChannelData(channel);
+      for (let frame = 0; frame < frames; frame++) samples[frame] = view.getInt16(data.start + (frame * channels + channel) * 2, true) / 32768;
+    }
+    return buffer;
+  }
 
   function create() {
     let context = null, enabled = false, disposed = false, permitted = false;
@@ -51,34 +76,47 @@
       return !disposed && enabled && permitted && context && context.state === 'running' && snapshot.mode !== 'silent';
     }
     function levels() {
-      const result = { lounge: 0, tension: 0, conversation: 0, couch: 0 };
+      const result = emptyMix();
       if (snapshot.mode === 'lounge') result.lounge = 1;
-      else if (snapshot.mode === 'upstairs') { result.lounge = .92; result.tension = .15 + snapshot.threat * .58; }
-      else if (snapshot.mode === 'conversation') { result.lounge = .08; result.conversation = .68; }
+      else if (snapshot.mode === 'snack') result.snack = 1;
+      else if (snapshot.mode === 'upstairs') { result.upstairs = 1; result.tension = snapshot.threat * .58; }
+      else if (snapshot.mode === 'midnight' || snapshot.mode === 'terrace') {
+        result.midnight = 1;
+        result['midnight-rhythm'] = snapshot.mode === 'midnight' ? 1 : 0;
+      }
+      else if (snapshot.mode === 'conversation') result.conversation = .68;
       else if (snapshot.mode === 'couch') result.couch = .95;
       return result;
     }
-    function automate(parameter, target, now, seconds) {
+    function automate(parameter, target, now, seconds, previous) {
+      // Track the ramp ourselves for browsers without cancelAndHoldAtTime.
+      const progress = previous ? clamp((now - previous.start) / (previous.end - previous.start), 0, 1) : 1;
+      const held = previous ? previous.from + (previous.to - previous.from) * progress : parameter.value;
       if (typeof parameter.cancelAndHoldAtTime === 'function') parameter.cancelAndHoldAtTime(now);
-      else { parameter.cancelScheduledValues(now); parameter.setValueAtTime(parameter.value, now); }
+      else { parameter.cancelScheduledValues(now); parameter.setValueAtTime(held, now); }
       parameter.linearRampToValueAtTime(target, now + seconds);
+      return { from: held, to: target, start: now, end: now + seconds };
     }
     function applyMix() {
       if (!playing) return;
       const desired = levels(), now = context.currentTime;
+      const changedArea = playing.mode !== snapshot.mode;
+      const terraceCrossing = (playing.mode === 'midnight' && snapshot.mode === 'terrace') || (playing.mode === 'terrace' && snapshot.mode === 'midnight');
       for (const track of playing.tracks) {
         const target = desired[track.id];
         if (Math.abs(track.target - target) < .002) continue;
-        automate(track.gain.gain, target, now, .55); track.target = target;
+        const seconds = terraceCrossing && track.id === 'midnight-rhythm' ? 3.2 : changedArea ? 2 : .55;
+        track.ramp = automate(track.gain.gain, target, now, seconds, track.ramp); track.target = target;
       }
+      playing.mode = snapshot.mode;
       const master = .45 * (snapshot.duck ? .58 : 1);
       if (playing.masterTarget !== master) {
-        automate(playing.master.gain, master, now, .25); playing.masterTarget = master;
+        playing.masterRamp = automate(playing.master.gain, master, now, .25, playing.masterRamp); playing.masterTarget = master;
       }
     }
     function startGraph() {
       if (!canPlay() || !buffers || playing) return false;
-      const current = { tracks: [], master: null, masterTarget: -1, when: context.currentTime + .025, offset: savedPhase % loopDuration };
+      const current = { tracks: [], master: null, masterTarget: -1, mode: 'silent', when: context.currentTime + .025, offset: savedPhase % loopDuration };
       try {
         current.master = context.createGain();
         current.master.gain.setValueAtTime(0, context.currentTime);
@@ -106,7 +144,7 @@
     }
     function ensureLoaded() {
       if (!canPlay() || buffers || loading || error) return;
-      if (typeof fetch !== 'function' || typeof context.decodeAudioData !== 'function') { error = 'Music decoding is unavailable.'; return; }
+      if (typeof fetch !== 'function' || typeof context.createBuffer !== 'function') { error = 'Music decoding is unavailable.'; return; }
       const token = ++generation, owner = context;
       const abort = typeof AbortController === 'function' ? new AbortController() : null;
       controller = abort; loads++;
@@ -115,7 +153,7 @@
         if (!response.ok) throw new Error('Music asset could not load.');
         const data = await response.arrayBuffer();
         if (token !== generation || owner !== context || disposed || !enabled) return null;
-        const buffer = await owner.decodeAudioData(data);
+        const buffer = decodePCM(owner, data);
         if (!buffer || !Number.isFinite(buffer.duration) || buffer.duration <= .05) throw new Error('Music asset could not decode.');
         return [id, buffer];
       })).then(decoded => {
@@ -157,7 +195,7 @@
       return {
         enabled, mode: snapshot.mode, ready: !!buffers, loading: !!loading, playing: !!playing,
         activeSources: playing?.tracks.length || 0, activeNodes: playing ? playing.tracks.length * 2 + 1 : 0,
-        targets: playing ? levels() : { lounge: 0, tension: 0, conversation: 0, couch: 0 },
+        targets: playing ? levels() : emptyMix(),
         masterGain: playing?.masterTarget || 0, phase: phase(), duration, loads, starts, error, disposed,
         cachedBuffers: buffers ? TRACKS.length : 0,
         cachedBytes: buffers ? TRACKS.reduce((sum, id) => sum + (buffers[id].length || 0) * (buffers[id].numberOfChannels || 1) * 4, 0) : 0

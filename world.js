@@ -6,7 +6,7 @@
     { id: 'library', name: 'The Library', shortName: 'Library', x: 1, y: 1, w: 8, h: 9, floor: '#8c775f', palette: { wall: '#cec7a5', accent: '#6b7650' }, description: 'A little light reading. A lot of snacking.' },
     { id: 'kitchen', name: 'Midnight Kitchen', shortName: 'Kitchen', x: 11, y: 1, w: 8, h: 9, floor: '#cabd99', palette: { wall: '#ded4b7', accent: '#708066' }, description: 'Follow your nose. And the crumbs.' },
     { id: 'arcade', name: 'The Game Room', shortName: 'Game room', x: 21, y: 1, w: 8, h: 9, floor: '#85796a', palette: { wall: '#c6c1a6', accent: '#728e7c' }, description: 'High scores. Higher snack standards.' },
-    { id: 'lounge', name: 'The Snack Lounge', shortName: 'Lounge', x: 1, y: 12, w: 8, h: 9, floor: '#ae8a6a', palette: { wall: '#d1c4a3', accent: '#c69d56' }, description: 'Your couch, your TV, and the place to bring the haul home.' },
+    { id: 'lounge', name: 'The Snack Lounge', shortName: 'Lounge', x: 1, y: 12, w: 8, h: 9, floor: '#ae8a6a', palette: { wall: '#d1c4a3', accent: '#c69d56' }, description: 'Start with a snack. Your private couch waits beyond the upstairs Midnight Wing.' },
     { id: 'foyer', name: 'The Grand Foyer', shortName: 'Foyer', x: 11, y: 12, w: 8, h: 9, floor: '#cec8ac', palette: { wall: '#e1d8ba', accent: '#8d9264' }, description: 'Welcome home. You left something delicious here.' },
     { id: 'conservatory', name: 'The Conservatory', shortName: 'Conservatory', x: 21, y: 12, w: 8, h: 9, floor: '#acb29a', palette: { wall: '#c8d0aa', accent: '#5f7a47' }, description: 'Good plants. Better hiding spots.' }
   ];
@@ -40,9 +40,9 @@
 
     { type: 'rug', room: 'lounge', x: 2.0, y: 14.25, w: 5.8, h: 4.7, color: '#c5a66f', solid: false },
     { type: 'sofa', room: 'lounge', x: 1.6, y: 14.5, w: 1.35, h: 3.2, color: '#d2ad63', orientation: 'east' },
-    { type: 'sofa', room: 'lounge', x: 3.5, y: 18.5, w: 3.3, h: 1.25, color: '#c39b54', orientation: 'north' },
+    { type: 'shelf', room: 'lounge', x: 3.5, y: 18.9, w: 3.3, h: .8, color: '#a78e6b', orientation: 'north' },
     { type: 'table', room: 'lounge', x: 4.5, y: 16.0, w: 2.35, h: 1.2, color: '#85684b' },
-    { type: 'television', room: 'lounge', x: 6.55, y: 13.1, w: 1.65, h: 0.65, color: '#494e43', orientation: 'south' },
+    { type: 'snackCart', room: 'lounge', x: 6.55, y: 13.1, w: 1.65, h: 0.65, color: '#b8a370' },
     { type: 'lamp', room: 'lounge', x: 1.55, y: 19.25, w: 0.55, h: 0.55, color: '#e1c58e' },
     { type: 'planter', room: 'lounge', x: 7.7, y: 19.5, w: 0.65, h: 0.65, color: '#66804b' },
 
@@ -95,7 +95,7 @@
     { type: 'planter', room: 'party', x: 27.6, y: 1.5, w: .7, h: .7, color: '#7a925e' },
 
     { type: 'rug', room: 'suite', x: 2, y: 14, w: 5.8, h: 5, color: '#b5a180', solid: false },
-    { type: 'sofa', room: 'suite', x: 1.6, y: 14.5, w: 1.3, h: 3.3, color: '#baa27b', orientation: 'east' },
+    { type: 'sofa', room: 'suite', x: 1.4, y: 14.5, w: 1.5, h: 3.3, color: '#baa27b', orientation: 'east' },
     { type: 'table', room: 'suite', x: 4.1, y: 16.1, w: 2.4, h: 1.2, color: '#9a795c' },
     { type: 'shelf', room: 'suite', x: 3.9, y: 19.2, w: 4.2, h: .75, color: '#9d8569' },
     { type: 'television', room: 'suite', x: 6.6, y: 13.1, w: 1.65, h: .65, color: '#545b52', orientation: 'south' },
@@ -119,8 +119,8 @@
   // scene transition as the stairs. Its hall connects three generous rooms.
   const wingRooms = [
     { id: 'snackerDen', name: 'The Snack Den', shortName: 'Snack den', x: 1, y: 1, w: 12, h: 8, floor: '#b59a7b', palette: { wall: '#e1d0ac', accent: '#b98d5a' }, description: 'Nico is helping himself. You are not the only one with the munchies.' },
-    { id: 'corgiPlayroom', name: 'The Corgi Clubhouse', shortName: 'Corgi clubhouse', x: 1, y: 12, w: 12, h: 9, floor: '#c4ad91', palette: { wall: '#e4d4bd', accent: '#c59079' }, description: 'Someone very small has very large dinner plans.' },
-    { id: 'petKitchen', name: 'The Doggy Kitchen', shortName: 'Doggy kitchen', x: 16, y: 1, w: 13, h: 20, floor: '#b3c0a8', palette: { wall: '#d9e2c9', accent: '#8da87b' }, description: 'Waffles has a proper dinner bowl here. Bring your little friend over.' }
+    { id: 'corgiPlayroom', name: 'The Corgi Clubhouse', shortName: 'Corgi clubhouse', x: 1, y: 12, w: 12, h: 9, floor: '#c4ad91', palette: { wall: '#e4d4bd', accent: '#c59079' }, description: 'Waffles runs this clubhouse. His very own staircase leads upstairs.' },
+    { id: 'petKitchen', name: 'The Doggy Kitchen', shortName: 'Doggy kitchen', x: 16, y: 1, w: 13, h: 20, floor: '#b3c0a8', palette: { wall: '#d9e2c9', accent: '#8da87b' }, description: 'Follow the paw trail, take a squeaky break, then bring Waffles to his far-corner dinner bowl.' }
   ];
   const wingFurniture = [
     { type: 'rug', room: 'snackerDen', x: 2.5, y: 3.3, w: 8.8, h: 4.6, color: '#bfa56f', solid: false },
@@ -131,19 +131,87 @@
     { type: 'shelf', room: 'snackerDen', x: 9.8, y: 1.4, w: 2.4, h: .75, color: '#9c805f' },
     { type: 'chair', room: 'snackerDen', x: 10.5, y: 6.8, w: 1, h: 1, color: '#b99a6c', orientation: 'west' },
     { type: 'planter', room: 'snackerDen', x: 1.5, y: 1.5, w: .7, h: .7, color: '#789460' },
+    { type: 'snackCart', room: 'snackerDen', x: 10.4, y: 4.8, w: 1.2, h: .7, color: '#a88f6c', name: 'Nico\'s snack trolley' },
     { type: 'rug', room: 'corgiPlayroom', x: 3.5, y: 14.1, w: 7.8, h: 5.4, color: '#cfa68a', solid: false },
     { type: 'rug', room: 'corgiPlayroom', x: 4.3, y: 18.5, w: 2.7, h: 1.3, color: '#dabb9b', solid: false },
     { type: 'sofa', room: 'corgiPlayroom', x: 1.6, y: 13.4, w: 1.35, h: 4.1, color: '#bbaa82', orientation: 'east' },
     { type: 'shelf', room: 'corgiPlayroom', x: 2.2, y: 19.5, w: 4, h: .8, color: '#aa916f' },
-    { type: 'chair', room: 'corgiPlayroom', x: 10, y: 13.2, w: 1.1, h: 1, color: '#d2ab79', orientation: 'south' },
+    { type: 'chair', room: 'corgiPlayroom', x: 9, y: 13.2, w: 1.1, h: 1, color: '#d2ab79', orientation: 'south' },
     { type: 'planter', room: 'corgiPlayroom', x: 10.8, y: 19.2, w: .8, h: .8, color: '#789460' },
+    { type: 'petBed', room: 'corgiPlayroom', x: 3.8, y: 17.8, w: 2.5, h: 1.2, color: '#bd9e79', solid: false, name: 'Waffles\'s cloud bed' },
+    { type: 'toyBox', room: 'corgiPlayroom', x: 7.6, y: 19.1, w: 1.8, h: .8, color: '#a18e78', name: 'The very good toy box' },
+    { type: 'table', room: 'corgiPlayroom', x: 5.2, y: 13.4, w: 2.7, h: .65, color: '#bf9279', name: 'Tiny agility bench' },
     { type: 'rug', room: 'petKitchen', x: 18, y: 13.9, w: 7.6, h: 5.5, color: '#b4c49b', solid: false },
     { type: 'kitchenCounter', room: 'petKitchen', x: 18, y: 1.5, w: 8.5, h: 1.1, color: '#99ac80', orientation: 'north' },
     { type: 'island', room: 'petKitchen', x: 22.5, y: 6, w: 3.8, h: 1.8, color: '#9cae87' },
     { type: 'kitchenCounter', room: 'petKitchen', x: 27.2, y: 12, w: 1.2, h: 3, color: '#99ac80', orientation: 'east' },
-    { type: 'fridge', room: 'petKitchen', x: 27.1, y: 3.5, w: 1.2, h: 1.3, color: '#d4dcca' },
+    { type: 'fridge', room: 'petKitchen', x: 17, y: 3.8, w: 1.2, h: 1.3, color: '#d4dcca' },
     { type: 'shelf', room: 'petKitchen', x: 18, y: 19.2, w: 5.7, h: .8, color: '#b49c77' },
-    { type: 'planter', room: 'petKitchen', x: 27.3, y: 19.2, w: .8, h: .8, color: '#769365' }
+    { type: 'planter', room: 'petKitchen', x: 27.3, y: 19.2, w: .8, h: .8, color: '#769365' },
+    { type: 'rug', room: 'petKitchen', x: 17.2, y: 8.2, w: 4.5, h: 4.3, color: '#c4b492', solid: false },
+    { type: 'table', room: 'petKitchen', x: 18.1, y: 8.8, w: 2.8, h: 1.35, color: '#b19268', name: 'The biscuit breakfast nook' },
+    { type: 'chair', room: 'petKitchen', x: 18.2, y: 10.7, w: .8, h: .75, color: '#ba9d72', orientation: 'north' },
+    { type: 'chair', room: 'petKitchen', x: 20.2, y: 10.7, w: .8, h: .75, color: '#ba9d72', orientation: 'north' },
+    { type: 'snackCart', room: 'petKitchen', x: 19.2, y: 5, w: 1.7, h: .8, color: '#9d9d79', name: 'Emergency biscuit cart' },
+    { type: 'shelf', room: 'petKitchen', x: 24.8, y: 10.1, w: 2.6, h: .9, color: '#b29e7c', name: 'The treat trophy cabinet' },
+    { type: 'toyBox', room: 'petKitchen', x: 17.4, y: 16.8, w: 1.4, h: .7, color: '#a48f72', name: 'Kitchen playtime supplies' },
+    { type: 'sofa', room: 'petKitchen', x: 24.2, y: 16.5, w: 2.2, h: 1.1, color: '#b5b98d', orientation: 'south' },
+    { type: 'petBed', room: 'petKitchen', x: 24, y: 18.3, w: 2.6, h: 1.4, color: '#c5b18b', solid: false, name: 'Post-dinner snooze spot' }
+  ];
+
+  // The final wing shares the upstairs elevation. Its side rooms are optional;
+  // the central hallway leads directly into the private snug beside the terrace.
+  const midnightRooms = [
+    { id: 'laundry', name: 'The Laundry Room', shortName: 'Laundry', x: 1, y: 1, w: 8, h: 9, floor: '#a9b7b7', palette: { wall: '#cbd8d5', accent: '#6e939a' }, description: 'Warm towels, spinning machines, and snacks nobody claimed.' },
+    { id: 'wardrobe', name: 'The Walk-in Wardrobe', shortName: 'Wardrobe', x: 11, y: 1, w: 8, h: 9, floor: '#ad93a5', palette: { wall: '#d8c5d2', accent: '#a27899' }, description: 'A midnight outfit change. Check the pockets before leaving.' },
+    { id: 'attic', name: 'The Collector\'s Attic', shortName: 'Collector attic', x: 21, y: 1, w: 8, h: 9, floor: '#9a826f', palette: { wall: '#d2bfa8', accent: '#ad8965' }, description: 'Old trunks, forgotten records, and a surprisingly fresh stash.' },
+    { id: 'terrace', name: 'The Moonlit Terrace', shortName: 'Moonlit terrace', x: 1, y: 12, w: 20, h: 9, floor: '#819497', palette: { wall: '#a9bfc1', accent: '#b9c8a5' }, description: 'An optional moonlit snack stop. The hallway leads straight to your couch.' },
+    { id: 'snug', name: 'The Private TV Snug', shortName: 'Private TV snug', x: 21, y: 12, w: 8, h: 9, floor: '#aa8d83', palette: { wall: '#d7c7c4', accent: '#c6a16b' }, description: 'Step in from the hallway. Just your couch, your TV, and your haul.' }
+  ];
+  const midnightFurniture = [
+    { type: 'washer', room: 'laundry', x: 1.4, y: 1.4, w: 1.8, h: 1.3, color: '#d0dad4' },
+    { type: 'washer', room: 'laundry', x: 3.5, y: 1.4, w: 1.85, h: 1.3, color: '#adc7c9' },
+    { type: 'towelShelf', room: 'laundry', x: 6.2, y: 1.4, w: 2.1, h: .9, color: '#a69278' },
+    { type: 'table', room: 'laundry', x: 3.4, y: 5.1, w: 2.6, h: 1.3, color: '#c4bba0' },
+    { type: 'laundryBasket', room: 'laundry', x: 1.65, y: 7.2, w: 1.05, h: 1, color: '#bb9f7c' },
+    { type: 'laundryBasket', room: 'laundry', x: 7.05, y: 7.3, w: 1.1, h: 1, color: '#9bb0aa' },
+    { type: 'rug', room: 'laundry', x: 2.8, y: 3.1, w: 3.4, h: 1.2, color: '#8ba8a4', solid: false },
+
+    { type: 'clothesRack', room: 'wardrobe', x: 11.4, y: 1.4, w: 3.15, h: 1.15, color: '#bc8fa6' },
+    { type: 'clothesRack', room: 'wardrobe', x: 15.55, y: 1.4, w: 3.05, h: 1.15, color: '#a38daf' },
+    { type: 'clothesRack', room: 'wardrobe', x: 11.55, y: 5.1, w: 2.15, h: .95, color: '#a5b3a0' },
+    { type: 'mirror', room: 'wardrobe', x: 17.4, y: 5.2, w: .9, h: .6, color: '#bb9b73' },
+    { type: 'ottoman', room: 'wardrobe', x: 14.8, y: 5.3, w: 1.5, h: 1.1, color: '#c69aaa' },
+    { type: 'trunk', room: 'wardrobe', x: 12.0, y: 8.0, w: 1.3, h: .75, color: '#c2aa8b' },
+    { type: 'rug', room: 'wardrobe', x: 14, y: 3.2, w: 2.8, h: 5.5, color: '#b79ba9', solid: false },
+
+    { type: 'shelf', room: 'attic', x: 21.4, y: 1.4, w: 7.2, h: .9, color: '#8e7257' },
+    { type: 'trunk', room: 'attic', x: 21.7, y: 4.1, w: 2.1, h: 1.1, color: '#967b5b' },
+    { type: 'recordCrate', room: 'attic', x: 25.9, y: 4.0, w: 1.65, h: 1.1, color: '#aa8e68' },
+    { type: 'trunk', room: 'attic', x: 24.4, y: 6.5, w: 1.9, h: 1.1, color: '#9c7476' },
+    { type: 'rockingHorse', room: 'attic', x: 21.7, y: 7.2, w: 1.4, h: .8, color: '#b59a74' },
+    { type: 'lamp', room: 'attic', x: 27.8, y: 7.8, w: .5, h: .5, color: '#dfbc7a' },
+
+    { type: 'grill', room: 'terrace', x: 2.2, y: 13.0, w: 2.1, h: 1.2, color: '#65767a' },
+    { type: 'table', room: 'terrace', x: 6.3, y: 14.2, w: 2.6, h: 1.5, color: '#b4a486' },
+    { type: 'chair', room: 'terrace', x: 5.0, y: 14.5, w: 1, h: 1.1, color: '#9cb4b0', orientation: 'east' },
+    { type: 'chair', room: 'terrace', x: 9.3, y: 14.5, w: 1, h: 1.1, color: '#9cb4b0', orientation: 'west' },
+    { type: 'planter', room: 'terrace', x: 1.65, y: 19.4, w: .9, h: .9, color: '#759b8a' },
+    { type: 'planter', room: 'terrace', x: 6.0, y: 19.4, w: .9, h: .9, color: '#759b8a' },
+    { type: 'planter', room: 'terrace', x: 11.5, y: 19.4, w: .9, h: .9, color: '#759b8a' },
+    { type: 'planter', room: 'terrace', x: 19.25, y: 19.4, w: .9, h: .9, color: '#759b8a' },
+    { type: 'snackCart', room: 'terrace', x: 16.5, y: 13, w: 1.8, h: .8, color: '#a3ada1' },
+    { type: 'ottoman', room: 'terrace', x: 16.8, y: 18.5, w: 1.7, h: 1.0, color: '#9dacae' },
+    { type: 'stringLights', room: 'terrace', x: 2.3, y: 18.9, w: 8.8, h: .15, color: '#ffe1a6', solid: false },
+    { type: 'stringLights', room: 'terrace', x: 13.3, y: 19.5, w: 6.5, h: .15, color: '#ffe1a6', solid: false },
+
+    { type: 'rug', room: 'snug', x: 22, y: 14.25, w: 5.8, h: 4.7, color: '#bda283', solid: false },
+    { type: 'sofa', room: 'snug', x: 23.5, y: 18.5, w: 3.3, h: 1.25, color: '#c39b54', orientation: 'north' },
+    { type: 'table', room: 'snug', x: 24.5, y: 16.0, w: 2.35, h: 1.2, color: '#937760' },
+    { type: 'television', room: 'snug', x: 26.55, y: 13.1, w: 1.65, h: .65, color: '#494e43', orientation: 'south' },
+    { type: 'lamp', room: 'snug', x: 21.55, y: 19.25, w: .55, h: .55, color: '#e1c58e' },
+    { type: 'planter', room: 'snug', x: 27.7, y: 19.5, w: .65, h: .65, color: '#66804b' },
+    { type: 'towelShelf', room: 'snug', x: 21.55, y: 13.1, w: 2.5, h: .8, color: '#b19980' }
   ];
 
   const snackKinds = [
@@ -166,13 +234,20 @@
   };
   const wingSpotsByRoom = {
     snackerDen: [[3, 2.55], [5, 2.55], [6.5, 2.55], [8.8, 3.6], [10.2, 3.6], [2.1, 6], [2.1, 7.1], [4.2, 7.4], [5.4, 7.5], [7.6, 7.5], [9.5, 7.7], [6.3, 6.1], [7.4, 6.1], [11.4, 5.1]],
-    corgiPlayroom: [[2.7, 14.2], [2.7, 16.3], [3, 19.7], [4.7, 19.7], [5.8, 19.7], [10.5, 14], [8.8, 15], [9.5, 18]],
-    petKitchen: [[19, 2.1], [23, 2.1], [26, 2.1], [23.2, 7.6], [25, 7.6], [27.45, 13]]
+    corgiPlayroom: [[2.7, 14.2], [2.7, 16.3], [3, 19.7], [4.7, 19.7], [5.8, 19.7], [10.5, 14], [8.8, 15], [10.1, 18.8]],
+    petKitchen: [[19, 2.1], [23, 2.1], [26, 2.1], [23.2, 7.6], [25, 7.6], [27.45, 13], [18.6, 9.5], [20.3, 9.5], [20, 5.5]]
+  };
+  const midnightSpotsByRoom = {
+    laundry: [[2.3, 2.5], [4.5, 2.5], [6.6, 2.1], [7.7, 2.1], [3.8, 5.7], [5.55, 5.7], [2.1, 7.7], [7.6, 7.8]],
+    wardrobe: [[12.1, 2.3], [13.7, 2.3], [16.1, 2.3], [17.7, 2.3], [12.1, 5.8], [15.5, 5.8], [12.65, 8.4]],
+    attic: [[22.2, 2.1], [24.2, 2.1], [26.2, 2.1], [27.7, 2.1], [22.3, 4.7], [23.25, 4.7], [26.7, 4.7], [25.35, 7.1]],
+    terrace: [[3.2, 13.8], [6.8, 15], [8.4, 15], [17, 13.5], [17.8, 13.5], [17.4, 19], [14.1, 14.1], [19.5, 16.9]]
   };
   const snackSpots = [
     ...snackKinds.flatMap(kind => kind.hidingSpots.map((spot, index) => ({ id: `${kind.id}-${index}`, room: kind.room, level: 0, ...spot }))),
     ...Object.entries(upstairsSpotsByRoom).flatMap(([room, positions]) => positions.map(([x, y], index) => ({ id: `up-${room}-${index}`, room, level: 1, x, y }))),
-    ...Object.entries(wingSpotsByRoom).flatMap(([room, positions]) => positions.map(([x, y], index) => ({ id: `wing-${room}-${index}`, room, level: 2, x, y })))
+    ...Object.entries(wingSpotsByRoom).flatMap(([room, positions]) => positions.map(([x, y], index) => ({ id: `wing-${room}-${index}`, room, level: 2, x, y }))),
+    ...Object.entries(midnightSpotsByRoom).flatMap(([room, positions]) => positions.map(([x, y], index) => ({ id: `midnight-${room}-${index}`, room, level: 3, x, y })))
   ];
   const snacks = [];
   const kindsByRoom = {
@@ -182,7 +257,8 @@
     cinema: ['pizza', 'chips', 'soda'], pantry: ['nachos', 'donut', 'icecream', 'cookies'],
     party: ['soda', 'chips', 'pizza'], suite: ['cookies', 'gummies', 'donut'],
     upperLanding: ['chips', 'cookies', 'soda'], studio: ['gummies', 'donut', 'pizza'],
-    snackerDen: ['chips', 'cookies', 'pizza', 'donut'], corgiPlayroom: ['cookies', 'chips', 'gummies', 'donut'], petKitchen: ['cookies', 'chips', 'soda']
+    snackerDen: ['chips', 'cookies', 'pizza', 'donut'], corgiPlayroom: ['cookies', 'chips', 'gummies', 'donut'], petKitchen: ['cookies', 'chips', 'soda'],
+    laundry: ['cookies', 'chips', 'donut'], wardrobe: ['gummies', 'cookies', 'soda'], attic: ['chips', 'gummies', 'pizza'], terrace: ['nachos', 'pizza', 'soda', 'donut']
   };
   const roomClues = {
     library: 'Search the library seating and shelves. Someone got hungry mid-chapter.',
@@ -199,9 +275,14 @@
     studio: 'Search the upstairs studio worktables. Creative work takes fuel.',
     snackerDen: 'Nico is eating his way around the wing snack den. Search the tables and seating.',
     corgiPlayroom: 'Waffles has company snacks around his clubhouse seating and shelves. His dinner is in the kitchen bowl.',
-    petKitchen: 'There are munchies around the wing kitchen counters. The bowl is for Waffles.'
+    petKitchen: 'There are munchies around the wing kitchen counters. The bowl is for Waffles.',
+    laundry: 'Past upstairs, check the laundry folding table and baskets. Leave the detergent alone.',
+    wardrobe: 'The Midnight Wing wardrobe has snacks tucked between clothes and shoes.',
+    attic: 'Someone hid a midnight stash among the collector attic trunks and records.',
+    terrace: 'Search the moonlit terrace on your way to the private TV snug.'
   };
-  const home = { room: 'lounge', level: 0, x: 4, y: 17.65, radius: 1.6, name: 'The Snack Lounge' };
+  const start = { x: 4, y: 17.65, level: 0, room: 'lounge' };
+  const home = { room: 'snug', level: 3, x: 24, y: 17.65, radius: 1.6, name: 'The Private TV Snug', seat: { x: 24.82, y: 18.9 }, focus: { x: 25, y: 16.7 }, television: { x: 26.55, y: 13.1, w: 1.65, h: .65 } };
 
   function buildWalls(floorRooms, level) {
     const result = [
@@ -237,22 +318,72 @@
     wall('petKitchen', 15.92, 18, .16, 3);
     return result;
   }
+  function buildMidnightWalls() {
+    const result = buildWalls([], 3);
+    const wall = (room, x, y, w, h) => result.push({ room, x, y, w, h, level: 3 });
+    for (const room of midnightRooms.slice(0, 3)) {
+      if (room.x !== 1) wall(room.id, room.x - .08, 1, .16, 9);
+      if (room.x !== 21) wall(room.id, room.x + room.w - .08, 1, .16, 9);
+      wall(room.id, room.x, 9.88, 2.5, .16);
+      wall(room.id, room.x + 5.5, 9.88, 2.5, .16);
+    }
+    wall('terrace', 1, 11.92, 12.5, .16);
+    wall('terrace', 16.5, 11.92, 4.5, .16);
+    // Enter directly from the hallway between the bookshelf and television.
+    wall('snug', 21, 11.92, 3.2, .16);
+    wall('snug', 26.2, 11.92, 2.8, .16);
+    wall('snug', 20.92, 12, .16, 9);
+    return result;
+  }
+  function carveExteriorDoorways(walls, doors) {
+    let result = walls;
+    for (const door of doors) {
+      const vertical = door.orientation === 'east' || door.orientation === 'west';
+      const opening = door.openingWidth || 2.4;
+      const center = vertical ? door.anchor.y : door.anchor.x;
+      const low = center - opening / 2, high = center + opening / 2, next = [];
+      for (const wall of result) {
+        const onEdge = wall.exterior && (
+          door.orientation === 'east' && wall.x >= 29 && wall.h > wall.w ||
+          door.orientation === 'west' && wall.x < 1 && wall.h > wall.w ||
+          door.orientation === 'north' && wall.y < 1 && wall.w > wall.h ||
+          door.orientation === 'south' && wall.y >= 21 && wall.w > wall.h
+        );
+        const start = vertical ? wall.y : wall.x, end = start + (vertical ? wall.h : wall.w);
+        if (!onEdge || high <= start || low >= end) { next.push(wall); continue; }
+        if (low > start) next.push(vertical ? { ...wall, h: low - start } : { ...wall, w: low - start });
+        if (high < end) next.push(vertical ? { ...wall, y: high, h: end - high } : { ...wall, x: high, w: end - high });
+      }
+      result = next;
+    }
+    return result;
+  }
+  const midnight = {
+    level: 3, name: 'Midnight Wing', doorId: 'midnight-entry',
+    directRoute: [{ x: 1.8, y: 11 }, { x: 25.2, y: 11 }, { x: 25.2, y: 14.5 }, { x: 23.6, y: 14.5 }, { x: 23.6, y: 17.65 }, { x: home.x, y: home.y }]
+  };
   const wing = {
     level: 2, name: 'Snack & Paws Wing', doorId: 'wing-entry',
     dog: { name: 'Waffles', level: 2, room: 'corgiPlayroom', x: 6.5, y: 16.5, radius: .25, maxEnergy: 100, startEnergy: 75, drain: 2.4, followSpeed: 3.5 },
-    bowl: { x: 21, y: 16.5, radius: 1.3, room: 'petKitchen', level: 2 },
+    bowl: { x: 27, y: 3.4, radius: 1.3, room: 'petKitchen', level: 2 },
+    toy: { x: 19.3, y: 13.9, radius: 1.3, energy: 25, name: 'Waffles\'s Squeaky Break', room: 'petKitchen', level: 2 },
+    pawTrail: [{ x: 10, y: 17 }, { x: 12, y: 16.5 }, { x: 14.5, y: 16.5 }, { x: 17, y: 16.5 }, { x: 19.3, y: 13.9 }, { x: 21.2, y: 12 }, { x: 21.6, y: 9.2 }, { x: 21.5, y: 5.1 }, { x: 24, y: 4 }, { x: 27, y: 3.4 }],
     eater: { id: 'snackBandit', name: 'Nico', level: 2, x: 6, y: 4.5, color: '#bc9a74', speed: 1.2, eatRadius: 1.15, eatDuration: 2.5, route: [{ x: 4, y: 4.5 }, { x: 10, y: 4.5 }, { x: 10, y: 7.4 }, { x: 4, y: 7.4 }] }
   };
   const floors = [
-    { id: 0, kind: 'mansion', name: 'Ground floor', rooms, furniture, stair: { x: 15, y: 11, radius: 1.4, to: 1, arrival: { x: 15, y: 10.8 } }, doors: [{ id: 'wing-entry', x: 25, y: 11, radius: 1.35, to: 2, arrival: { x: 14.5, y: 11 }, label: 'Snack & Paws wing' }] },
-    { id: 1, kind: 'mansion', name: 'Upstairs', rooms: upstairsRooms, furniture: upstairsFurniture, stair: { x: 15, y: 11, radius: 1.4, to: 0, arrival: { x: 15, y: 10.8 } }, doors: [] },
-    { id: 2, kind: 'wing', name: 'Snack & Paws Wing', rooms: wingRooms, furniture: wingFurniture, walls: buildWingWalls(), doors: [{ id: 'wing-exit', x: 14.5, y: 11, radius: 1.35, to: 0, arrival: { x: 25, y: 10.8 }, label: 'Main mansion' }] }
+    { id: 0, kind: 'mansion', name: 'Ground floor', rooms, furniture, stair: null, doors: [{ id: 'wing-entry', x: 28.2, y: 11, radius: 1.35, orientation: 'east', anchor: { x: 29.1, y: 11 }, openingWidth: 2.4, to: 2, arrival: { x: 1.8, y: 11 }, label: 'Snack & Paws wing' }] },
+    { id: 1, kind: 'mansion', name: 'Upstairs', rooms: upstairsRooms, furniture: upstairsFurniture, stair: { x: 14.5, y: 17.8, radius: 1.4, direction: 'down', orientation: 'west', anchor: { x: 12.65, y: 17.8 }, length: 3, width: 1.5, footprint: { x: 11.15, y: 17.05, w: 3, h: 1.5 }, room: 'upperLanding', to: 2, arrival: { x: 11.5, y: 16.1 } }, doors: [{ id: 'midnight-entry', x: 28.2, y: 11, radius: 1.35, orientation: 'east', anchor: { x: 29.1, y: 11 }, openingWidth: 2.4, to: 3, arrival: { x: 1.8, y: 11 }, label: 'Midnight Wing · Couch & TV' }] },
+    { id: 2, kind: 'wing', name: 'Snack & Paws Wing', rooms: wingRooms, furniture: wingFurniture, stair: { x: 11.5, y: 15.5, radius: 1.4, direction: 'up', orientation: 'north', anchor: { x: 11.5, y: 13.65 }, length: 3, width: 1.5, footprint: { x: 10.75, y: 12.15, w: 1.5, h: 3 }, room: 'corgiPlayroom', to: 1, arrival: { x: 15.1, y: 17.8 } }, walls: buildWingWalls(), doors: [{ id: 'wing-exit', x: 1.8, y: 11, radius: 1.35, orientation: 'west', anchor: { x: .9, y: 11 }, openingWidth: 2.4, to: 0, arrival: { x: 28.2, y: 11 }, label: 'Main mansion' }] },
+    { id: 3, kind: 'midnight', name: 'Midnight Wing', rooms: midnightRooms, furniture: midnightFurniture, walls: buildMidnightWalls(), doors: [{ id: 'midnight-exit', x: 1.8, y: 11, radius: 1.35, orientation: 'west', anchor: { x: .9, y: 11 }, openingWidth: 2.4, to: 1, arrival: { x: 28.2, y: 11 }, label: 'Upstairs' }] }
   ];
   floors.forEach(floor => {
     floor.rooms.forEach(room => { room.level = floor.id; });
     floor.furniture.forEach(item => { item.level = floor.id; });
-    floor.walls = floor.walls || buildWalls(floor.rooms, floor.id);
-    floor.solids = floor.walls.concat(floor.furniture.filter(item => item.solid !== false));
+    floor.walls = carveExteriorDoorways(floor.walls || buildWalls(floor.rooms, floor.id), floor.doors);
+    // The renderer owns the stair model; its run is a real collision footprint
+    // so the landing stays accessible without letting actors cross a stairwell.
+    floor.transitionSolids = floor.stair ? [{ ...floor.stair.footprint, type: 'stairRun', room: floor.stair.room, level: floor.id, cornerRadius: .04 }] : [];
+    floor.solids = floor.walls.concat(floor.furniture.filter(item => item.solid !== false), floor.transitionSolids);
     floor.collisionProfiles = floor.solids.map(createCollisionProfile);
   });
   // Guest routes stay in open aisles. They are temporary social obstacles,
@@ -526,15 +657,16 @@
     furniture,
     guests,
     wing,
+    midnight,
     snacks,
     snackKinds,
     snackSpots,
     walls: floors[0].walls,
     home,
-    start: { x: home.x, y: home.y, level: 0 },
+    start,
     collectionRadius: 1.2,
     playerRadius: 0.22,
-    rules: { maxEnergy: 100, startEnergy: 100, idleDrain: 1.15, distanceDrain: 1.3, sprintMultiplier: 1.5, sprintDrainMultiplier: 1.8, discoveryRadius: 4.4, hints: 2, conversationRadius: 1.05, conversationDuration: 16, conversationLineDuration: 3.2, conversationCooldown: 6, conversationEscapePresses: 12, conversationEscapeCost: 4 },
+    rules: { maxEnergy: 100, startEnergy: 100, idleDrain: 1.15, distanceDrain: 1.3, sprintMultiplier: 1.5, sprintDrainMultiplier: 1.8, discoveryRadius: 4.4, hints: 2, conversationRadius: 1.05, conversationDuration: 16, conversationLineDuration: 2.4, conversationCooldown: 6, conversationEscapePresses: 12, conversationEscapeCost: 4 },
     activateFloor(level) {
       const floor = floors.find(item => item.id === level);
       if (!floor) return false;
@@ -553,8 +685,8 @@
       };
       const selected = floors.flatMap(floor => {
         const floorSpots = snackSpots.filter(spot => spot.level === floor.id);
-        const count = floor.id === 0 ? 16 + Math.floor(next() * 7) : floor.id === 1 ? 32 + Math.floor(next() * 9) : 10 + Math.floor(next() * 7);
-        const homeSpots = floorSpots.filter(spot => spot.room === home.room);
+        const count = floor.id === 0 ? 16 + Math.floor(next() * 7) : floor.id === 1 ? 32 + Math.floor(next() * 9) : floor.id === 3 ? 14 + Math.floor(next() * 7) : 10 + Math.floor(next() * 7);
+        const homeSpots = floorSpots.filter(spot => spot.room === start.room && spot.level === start.level);
         const firstHome = homeSpots.length ? homeSpots[Math.floor(next() * homeSpots.length)] : null;
         const candidates = floorSpots.filter(spot => spot !== firstHome);
         for (let i = candidates.length - 1; i > 0; i--) {
@@ -562,7 +694,7 @@
           [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
         // Waffles's room always has human snacks, and Nico's den starts stocked.
-        const required = firstHome ? [firstHome] : floor.id === 2 ? [...candidates.filter(spot => spot.room === 'corgiPlayroom').slice(0, 3), ...candidates.filter(spot => spot.room === 'snackerDen').slice(0, 1)] : [];
+        const required = firstHome ? [firstHome] : floor.id === 2 ? [...candidates.filter(spot => spot.room === 'corgiPlayroom').slice(0, 3), ...candidates.filter(spot => spot.room === 'snackerDen').slice(0, 1)] : floor.id === 3 ? candidates.filter(spot => spot.id === 'midnight-terrace-6' || spot.id === 'midnight-terrace-7') : [];
         return [...required, ...candidates.filter(spot => !required.includes(spot))].slice(0, count);
       });
       const generated = selected.map(spot => {

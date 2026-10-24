@@ -93,7 +93,8 @@
           const duration = .115 + next() * .075, gap = .025 + next() * .04 + (i % 4 === 3 ? .09 : 0);
           syllables.push({ duration, gap }); total += duration + gap;
         }
-        const duration = clamp((1.82 + next() * .36) / voice.pace, 1.65, 2.62), scale = duration / total;
+        // Leave a short gap before the next 2.4-second dialogue card.
+        const duration = clamp((1.82 + next() * .36) / voice.pace, 1.65, 2.25), scale = duration / total;
         const start = context.currentTime + .018, questioning = /\?\s*$/.test(text);
         let at = start;
         for (let i = 0; i < count; i++) {
