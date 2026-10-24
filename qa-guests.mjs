@@ -81,7 +81,10 @@ assert.ok(debug.fieldBuilds >= 8 && debug.fieldBuilds <= 17, `six pursuers share
 assert.ok(debug.reachableCells > 100, 'the shared pursuit field reaches the upstairs navigation graph');
 console.log(`PASS: pursuit memory expires behind cover; six pursuers share one grid and ${debug.fieldBuilds} flow builds over four seconds`);
 
-const exit = create('snackExpert'), safePlayer = { x: 15, y: 11, level: 1 };
+const exit = create('snackExpert'), safePlayer = { ...world.floors[1].stair, level: 1 };
+const safeGuest = [{ x: safePlayer.x + 1.3, y: safePlayer.y }, { x: safePlayer.x - 1.3, y: safePlayer.y }, { x: safePlayer.x, y: safePlayer.y + 1.3 }, { x: safePlayer.x, y: safePlayer.y - 1.3 }].find(point => world.isWalkable(point.x, point.y, .22, 1));
+assert.ok(safeGuest, 'stair safe-zone test has a nearby clear guest position');
+Object.assign(exit.guests[0], safeGuest, { route: [{ ...safeGuest }, { ...safeGuest }] });
 tick(exit.brain, exit.guests, safePlayer, 3);
 assert.equal(exit.guests[0].chasing, false, 'standing on the stairs keeps a clear escape route');
 const hidden = create(), downstairs = { x: 10, y: 8, level: 0 };
@@ -97,9 +100,9 @@ assert.equal(hidden.guests[0].chasing, true, 'reset discards old floor targeting
 // Repeated updates with all real guests catch narrow aisles, bad route nodes,
 // unsafe flow-field corners and excessive steady collision work.
 const crowd = world.guests.map(guest => clone(guest.id)), crowdBrain = api.create(world);
-tick(crowdBrain, crowd, { x: 15, y: 11, level: 1 }, .1);
+tick(crowdBrain, crowd, { ...world.floors[1].stair, level: 1 }, .1);
 collisions = 0;
-tick(crowdBrain, crowd, { x: 15, y: 11, level: 1 }, 12);
+tick(crowdBrain, crowd, { ...world.floors[1].stair, level: 1 }, 12);
 assert.ok(collisions < 60000, `steady guest updates stay bounded (${collisions} collision checks over twelve seconds)`);
 assert.ok(crowd.every(guest => guest.alertness === 'patrolling' || guest.alertness === 'idle'), 'safe landing does not leave a stale alert marker');
 console.log(`PASS: stairs/floor/reset guards and twelve seconds of six-guest navigation; ${collisions} bounded collision checks`);

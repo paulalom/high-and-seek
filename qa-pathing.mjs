@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
-export function createGameHarness({ frameMs = 1000 / 60, seed = 19, storage = new Map(), guestBrainEnabled = true, wingSimulationEnabled = true, videoPlayError = false, audioContextFactory = null, musicFetch = null } = {}) {
+export function createGameHarness({ frameMs = 1000 / 60, seed = 19, storage = new Map(), guestBrainEnabled = true, wingSimulationEnabled = true, stealthSimulationEnabled = true, videoPlayError = false, audioContextFactory = null, musicFetch = null } = {}) {
 const metrics = { draws: 0, rafScheduled: 0, rafCallbacks: 0, maxPendingRaf: 0, domWrites: 0, textWrites: 0, styleWrites: 0, attributeWrites: 0, classWrites: 0, propertyWrites: 0, queries: 0, walkabilityChecks: 0, tvAssignments: 0, floorAssignments: 0, cameraResets: 0, storageWrites: 0, drawTimes: [] };
 const htmlSource = fs.readFileSync(path.join(projectRoot, 'dist/index.html'), 'utf8');
 const write = type => { metrics.domWrites++; metrics[type]++; };
@@ -68,6 +68,8 @@ vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/world.js'), 'utf8')
 vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/guests.js'), 'utf8'), sandbox);
 if (fs.existsSync(path.join(projectRoot, 'dist/wing.js'))) vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/wing.js'), 'utf8'), sandbox);
 if (!wingSimulationEnabled && sandbox.window.HSWing) { const createWing = sandbox.window.HSWing.create; sandbox.window.HSWing = { create: (...args) => ({ ...createWing(...args), update() {} }) }; }
+if (fs.existsSync(path.join(projectRoot, 'dist/stealth.js'))) vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/stealth.js'), 'utf8'), sandbox);
+if (!stealthSimulationEnabled && sandbox.window.HSStealth) { const createStealth = sandbox.window.HSStealth.create; sandbox.window.HSStealth = { create: (...args) => ({ ...createStealth(...args), update() {}, makeNoise() {}, drainEvents: () => [] }) }; }
 vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/chatter.js'), 'utf8'), sandbox);
 vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/music.js'), 'utf8'), sandbox);
 if (fs.existsSync(path.join(projectRoot, 'dist/munching.js'))) vm.runInContext(fs.readFileSync(path.join(projectRoot, 'dist/munching.js'), 'utf8'), sandbox);
@@ -80,6 +82,7 @@ miniMapTiles = sandbox.window.HSWorld.rooms.map(room => { const node = makeNode(
 snackRows = sandbox.window.HSWorld.snacks.map(snack => { const node = getNode(`snack-${snack.id}`); node.id = `snack-${snack.id}`; return node; });
 let source = fs.readFileSync(path.join(projectRoot, 'dist/app.js'), 'utf8');
 source = source.replace('window.HighAndSeek =', 'window.__qa = { state, begin, collect, autoEat: typeof autoEat === "function" ? autoEat : null, spendEnergy: typeof spendEnergy === "function" ? spendEnergy : null, navigate, move, frame, keys, restart, openPause, openMap, closeDialog, hint, music: typeof music === "object" ? music : null, syncMusic: typeof syncMusic === "function" ? syncMusic : null, canFinishRun: typeof canFinishRun === "function" ? canFinishRun : null, finishRun: typeof finishRun === "function" ? finishRun : null, headHome: typeof headHome === "function" ? headHome : null, interact: typeof interact === "function" ? interact : null, changeFloor: typeof changeFloor === "function" ? changeFloor : null, useStairs: typeof useStairs === "function" ? useStairs : null, canUseStairs: typeof canUseStairs === "function" ? canUseStairs : null, headForStairs: typeof headForStairs === "function" ? headForStairs : null, headForWing: typeof headForWing === "function" ? headForWing : null, useDoor: typeof useDoor === "function" ? useDoor : null, canUseDoor: typeof canUseDoor === "function" ? canUseDoor : null, wingSimulation: typeof wingSimulation === "object" ? wingSimulation : null, excuseConversation: typeof excuseConversation === "function" ? excuseConversation : null, updateGuests: typeof updateGuests === "function" ? updateGuests : null, checkConversation: typeof checkConversation === "function" ? checkConversation : null, getPath: () => path, getAuto: () => autoCollect }; window.HighAndSeek =');
+source = source.replace('window.__qa = {', 'window.__qa = { stealthSimulation: typeof stealthSimulation === "object" ? stealthSimulation : null, startResidentLecture: typeof startResidentLecture === "function" ? startResidentLecture : null, handleStealthEvents: typeof handleStealthEvents === "function" ? handleStealthEvents : null, endConversation: typeof endConversation === "function" ? endConversation : null,');
 vm.runInContext(source, sandbox);
 const qa = sandbox.window.__qa;
 const world = sandbox.window.HSWorld;
@@ -91,7 +94,7 @@ return { qa, world, guestBrain: sandbox.window.HSGuestBrain, chatterAPI: sandbox
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 const frameStep = Number(process.argv[2] || process.env.QA_FRAME_MS) || 1000 / 60;
-const { qa, world, miniMapTiles, stepFrame, random } = createGameHarness({ frameMs: frameStep, guestBrainEnabled: false, wingSimulationEnabled: false });
+const { qa, world, miniMapTiles, stepFrame, random } = createGameHarness({ frameMs: frameStep, guestBrainEnabled: false, wingSimulationEnabled: false, stealthSimulationEnabled: false });
 qa.state.guests = []; // Route geometry is independent of the timed guest obstacle.
 const spawned = [...world.snacks];
 for (const snack of spawned) {
@@ -115,7 +118,7 @@ assert.equal(qa.state.won, false, 'collecting every spawned snack never automati
 assert.equal(qa.state.found.size, spawned.length);
 assert.ok(miniMapTiles.every(tile => !tile.classList.contains('cleared')), 'mini-map never reveals cleared rooms');
 qa.state.energy = world.rules.maxEnergy;
-if (qa.state.level !== 0) qa.changeFloor(0, world.start);
+if (qa.state.level !== world.home.level) qa.changeFloor(world.home.level, world.home);
 qa.navigate(world.home.x, world.home.y);
 for (let frames = 0; qa.getPath().length && frames++ < 4000; ) stepFrame();
 assert.equal(qa.state.won, false, 'arriving home does not finish automatically');

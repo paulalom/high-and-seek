@@ -1,119 +1,110 @@
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createGameHarness } from './qa-pathing.mjs';
+import { escapeConversation, nextHomeExit, walkRoute, walkToHome } from './qa-route-helpers.mjs';
 
-// These are real walks from the couch, with normal fuel, pickup and guest rules.
-// No world positions, energy meters, bags or guests are replaced by fixtures.
-export function simulateReturnTrip({ seed, floor = 0, pickups = 4, linger = 0, homePickups = 0, energyValues = null } = {}) {
-  const run = createGameHarness({ seed }), { qa, world } = run;
-  // A local comparison fixture can restore the previous values in this VM only.
-  // Routes, bag rules, drains, guests and all production files stay untouched.
-  if (energyValues) {
-    for (const kind of world.snackKinds) kind.energy = energyValues[kind.id];
-    for (const snack of world.snacks) snack.energy = energyValues[snack.kind];
-  }
-  let distance = 0, minimumEnergy = qa.state.energy, escaped = 0;
-  const moveCircle = world.moveCircle;
-  world.moveCircle = function (...args) {
-    const moved = moveCircle.apply(this, args);
-    if (args.length === 4) distance += moved.distance; // Player calls use the default radius; NPC calls pass their radius.
-    return moved;
-  };
-  const frame = () => {
-    run.stepFrame();
-    minimumEnergy = Math.min(minimumEnergy, qa.state.energy);
-  };
-  const escape = () => {
-    if (!qa.state.conversation) return;
-    const required = qa.state.conversation.escapeRequired;
-    for (let press = 0; qa.state.conversation && !qa.state.failed && press < required + 1; press++) {
-      for (let count = 0; count < 6 && !qa.state.failed; count++) frame();
-      qa.interact();
-    }
-    if (!qa.state.conversation && !qa.state.failed) escaped++;
-  };
-  const walk = condition => {
-    for (let count = 0; !condition() && !qa.state.failed && count < 6000; count++) {
-      frame(); escape();
-      if (!qa.getPath().length && !condition() && !qa.state.conversation) break;
-    }
-    return condition();
-  };
+const values = { cookies: 22, chips: 19, nachos: 26, icecream: 21, soda: 16, pizza: 29, donut: 24, gummies: 22 };
+const oldValues = { cookies: 28, chips: 24, nachos: 32, icecream: 26, soda: 20, pizza: 36, donut: 30, gummies: 28 };
+const meal = ['soda', 'chips', 'cookies', 'pizza'];
+const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) < 1e-7, `${label}: ${actual} versus ${expected}`);
+
+// This fixture isolates the food budget from mansion layout. Both versions use
+// the real game's automatic-eating functions, identical food kinds and costs.
+// The previous energies exist only on fixture meals in their separate VM.
+function foodBudget(previous = false) {
+  const run = createGameHarness({ guestBrainEnabled: false, wingSimulationEnabled: false });
+  const { qa, world } = run;
+  assert.deepEqual(Object.fromEntries(world.snackKinds.map(kind => [kind.id, kind.energy])), values, 'live refill values retain the reduced balance');
   qa.begin();
-  if (floor === 1) {
-    qa.headForStairs();
-    assert.ok(walk(() => !qa.getPath().length), 'outbound stair route completes');
-    assert.ok(qa.canUseStairs(), 'outbound walk reaches the usable stairs');
-    qa.interact();
-    assert.equal(qa.state.level, 1, 'the player explicitly climbs the stairs');
-  }
-  const candidates = world.snacks.filter(snack => snack.level === floor);
-  for (let count = 0; count < pickups && !qa.state.failed; count++) {
-    const pool = candidates.filter(snack => floor !== 0 || (count < homePickups ? snack.room === world.home.room : snack.room !== world.home.room));
-    pool.sort((a, b) => Math.hypot(a.x - qa.state.player.x, a.y - qa.state.player.y) - Math.hypot(b.x - qa.state.player.x, b.y - qa.state.player.y));
-    const target = pool[0];
-    assert.ok(target, 'the prescribed trip has enough world pickups');
-    candidates.splice(candidates.indexOf(target), 1);
-    qa.navigate(target.x, target.y, target);
-    if (!walk(() => qa.state.found.has(target.id))) break;
-  }
-  const pickedBeforeLinger = qa.state.found.size, carriedBeforeLinger = qa.state.bag.length;
-  const lingerUntil = qa.state.elapsed + linger;
-  while (qa.state.elapsed < lingerUntil && !qa.state.failed) { frame(); escape(); }
-  if (!qa.state.failed) {
-    qa.headHome();
-    walk(() => !qa.getPath().length);
-    if (floor === 1 && !qa.state.failed) {
-      assert.ok(qa.canUseStairs(), 'the upstairs return reaches usable stairs');
-      qa.interact();
-      assert.equal(qa.state.level, 0, 'the return trip explicitly descends');
-      qa.headHome(); walk(() => !qa.getPath().length);
-    }
-  }
-  const atHome = qa.state.level === 0 && world.isHome(qa.state.player.x, qa.state.player.y);
-  const pickedEnergy = world.snacks.filter(snack => qa.state.found.has(snack.id)).reduce((total, snack) => total + snack.energy, 0);
-  const carriedEnergy = qa.state.bag.reduce((total, snack) => total + snack.energy, 0);
-  const consumedEnergy = pickedEnergy - carriedEnergy;
-  const energySpent = world.rules.startEnergy + consumedEnergy - qa.state.energy;
-  const banked = atHome && !qa.state.failed ? qa.finishRun() : false;
-  const result = {
-    seed, floor, pickups, homePickups, linger, elapsed: qa.state.elapsed, distance, energySpent,
-    movementEnergy: distance * world.rules.distanceDrain,
-    picked: qa.state.found.size, pickedEnergy, consumed: qa.state.consumedCount,
-    consumedEnergy, carried: qa.state.bag.length, carriedEnergy, banked: qa.state.bankedCount,
-    minimumEnergy, finishEnergy: qa.state.energy, escaped, failed: qa.state.failed,
-    atHome, finished: banked, pickedBeforeLinger, carriedBeforeLinger
+  qa.state.bag = meal.map((id, index) => {
+    const kind = world.snackKinds.find(item => item.id === id);
+    return { ...kind, id: `budget-${index}`, kind: id, energy: previous ? oldValues[id] : kind.energy };
+  });
+  qa.state.found = new Set(qa.state.bag.map(item => item.id));
+  qa.state.haulCounts = Object.fromEntries(meal.map(id => [id, 1]));
+  qa.state.consumedCount = 0;
+  const collectedEnergy = qa.state.bag.reduce((sum, item) => sum + item.energy, 0);
+  let spent = 0;
+  const snapshot = () => {
+    const carriedEnergy = qa.state.bag.reduce((sum, item) => sum + item.energy, 0);
+    assert.equal(qa.state.bag.length + qa.state.consumedCount, meal.length, 'each picked food is carried or eaten exactly once');
+    assert.equal(qa.state.found.size, meal.length, 'eating preserves pickup history');
+    assert.equal(Object.values(qa.state.haulCounts).reduce((sum, count) => sum + count, 0), qa.state.bag.length, 'per-kind counts match the remaining bag');
+    near(world.rules.startEnergy + collectedEnergy, spent + qa.state.energy + carriedEnergy, 'collected fuel is conserved in meter, bag and actual expenditure');
+    assert.ok(qa.state.energy >= 0 && qa.state.energy <= world.rules.maxEnergy, 'automatic eating never overflows the meter');
+    return { collectedEnergy, spent, energy: qa.state.energy, consumed: qa.state.consumedCount, carried: qa.state.bag.length, carriedEnergy };
   };
-  assert.equal(result.picked, result.consumed + result.carried, 'every picked snack is carried or eaten');
-  assert.equal(result.banked, banked ? result.carried : 0, 'only food actually carried to the couch is banked');
-  assert.ok(Math.abs(world.rules.startEnergy + pickedEnergy - energySpent - qa.state.energy - carriedEnergy) < 1e-7, 'starting fuel and collected food reconcile to spent fuel, remaining meter and carried food');
-  const expectedSpent = world.rules.idleDrain * result.elapsed + result.movementEnergy + escaped * world.rules.conversationEscapeCost;
-  assert.ok(Math.abs(energySpent - expectedSpent) < .06, `meter expenditure reconciles to real time, distance and escaped conversations: ${JSON.stringify({ result, expectedSpent })}`);
-  return result;
+  const drain = amount => {
+    near(qa.spendEnergy(amount), amount, 'the budget pays the entire affordable cost');
+    spent += amount;
+    return snapshot();
+  };
+  return { qa, world, drain, snapshot };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const oldValues = { cookies: 28, chips: 24, nachos: 32, icecream: 26, soda: 20, pizza: 36, donut: 30, gummies: 28 };
-  console.log(`BALANCE VALUES ${JSON.stringify(Object.fromEntries(createGameHarness().world.snackKinds.map(kind => [kind.id, kind.energy])))}`);
-  let tighterHaul = false;
-  for (const plan of [{ floor: 0, pickups: 3, homePickups: 1 }, { floor: 1, pickups: 8 }]) {
-    const current = simulateReturnTrip({ seed: 7, ...plan });
-    const original = simulateReturnTrip({ seed: 7, ...plan, energyValues: oldValues });
-    const delayed = simulateReturnTrip({ seed: 7, ...plan, linger: 30 });
-    for (const [label, result] of Object.entries({ current, original, delayed })) console.log(`BALANCE ${label} ${JSON.stringify(Object.fromEntries(Object.entries(result).map(([key, value]) => [key, typeof value === 'number' ? Math.round(value * 100) / 100 : value])))}`);
-    assert.equal(current.picked, plan.pickups, 'the immediate trip reaches its prescribed pickups');
-    assert.equal(current.finished, true, 'the nearby and medium trips can return and bank');
-    assert.ok(current.banked > 0, 'a careful return retains food to bank');
-    assert.equal(original.picked, current.picked, 'the previous values comparison follows the same pickup count');
-    assert.ok(current.pickedEnergy < original.pickedEnergy, 'the same food now supplies less total energy');
-    assert.ok(current.consumed >= original.consumed && current.banked <= original.banked, 'smaller refills do not produce a larger banked haul');
-    tighterHaul ||= current.consumed > original.consumed || current.banked < original.banked;
-    assert.equal(delayed.pickedBeforeLinger, current.pickedBeforeLinger, 'the linger comparison starts with the same actual pickups');
-    assert.equal(delayed.carriedBeforeLinger, current.carriedBeforeLinger, 'the linger comparison starts with the same actual bag');
-    assert.ok(delayed.energySpent > current.energySpent, 'lingering increases the real energy budget');
-    assert.ok(delayed.failed || delayed.banked < current.banked, 'waiting consumes more of the haul or loses the run');
-  }
-  assert.ok(tighterHaul, 'at least one real return trip consumes more food and banks less than before');
-  console.log('PASS: real nearby and upstairs return trips remain viable, lower refills reduce the haul, and lingering spends more food');
+for (const [kind, energy] of Object.entries(values)) {
+  assert.ok(energy >= 16 && energy <= 29 && energy < oldValues[kind], `${kind} supplies less fuel than before`);
 }
+
+const current = foodBudget(), previous = foodBudget(true);
+const before = current.drain(70), original = previous.drain(70);
+assert.ok(before.collectedEnergy < original.collectedEnergy, 'the same four kinds supply less total fuel');
+assert.ok(before.consumed > original.consumed && before.carried < original.carried, 'the same expenditure now eats more food and leaves less to bank');
+near(original.energy + original.carriedEnergy - before.energy - before.carriedEnergy, original.collectedEnergy - before.collectedEnergy, 'remaining fuel falls by exactly the reduction in food energy');
+
+// Charge thirty seconds at the actual idle rate, in one-second chunks. Timing
+// and route integration are covered by the gameplay suites; this checks how
+// that declared time cost changes the food available to bank on any floor.
+const lingerSeconds = 30;
+for (let second = 0; second < lingerSeconds; second++) current.drain(current.world.rules.idleDrain);
+const delayed = current.snapshot();
+near(delayed.spent - before.spent, lingerSeconds * current.world.rules.idleDrain, 'lingering pays its full declared time cost');
+assert.ok(delayed.consumed > before.consumed && delayed.carried < before.carried, 'waiting consumes more of the same haul');
+assert.equal(delayed.carried, 0, 'the remaining snack can be eaten before a player banks it');
+assert.equal(current.qa.state.failed, false, 'losing bankable food does not itself fail a healthy player');
+
+console.log(`PASS: identical four-food budgets supply ${before.collectedEnergy} versus ${original.collectedEnergy} previous energy; spending 70 leaves ${before.carried} versus ${original.carried} snacks`);
+console.log(`PASS: ${lingerSeconds}s of idle cost spends ${(delayed.spent - before.spent).toFixed(1)} more energy, eats the last snack, and preserves all fuel and pickup counts`);
+
+// One complete journey uses normal movement, food and actors. After exploring
+// the starting area, an optional three-snack terrace detour funds the walk
+// back into the hallway and through the snug's north entrance.
+const journey = createGameHarness({ seed: 7 }), { qa, world } = journey;
+let minimumEnergy = qa.state.energy;
+const onFrame = () => { minimumEnergy = Math.min(minimumEnergy, qa.state.energy); };
+qa.begin();
+const remaining = world.snacks.filter(food => food.level === world.start.level);
+for (let pickup = 0; pickup < 8; pickup++) {
+  remaining.sort((a, b) => Math.hypot(a.x - qa.state.player.x, a.y - qa.state.player.y) - Math.hypot(b.x - qa.state.player.x, b.y - qa.state.player.y));
+  const target = remaining.shift();
+  qa.navigate(target.x, target.y, target);
+  walkRoute(journey, { onFrame, label: `starting-area pickup ${target.id}` });
+  assert.ok(qa.state.found.has(target.id), 'the food budget comes from actual world pickups');
+}
+const transitions = [];
+while (qa.state.level !== world.home.level) {
+  const from = qa.state.level, exit = nextHomeExit(world, from);
+  qa.headHome(); walkRoute(journey, { onFrame, label: 'forward route to the next section' });
+  assert.equal(qa.state.level, from, 'the forward journey crosses every boundary explicitly');
+  for (let count = 0; qa.state.stairsCooldown > 0 && count < 120; count++) { journey.stepFrame(100); onFrame(); escapeConversation(journey, onFrame); }
+  assert.equal(world.floors[from].stair === exit ? qa.useStairs() : qa.useDoor(), true, 'the forward route uses a physical section connection');
+  assert.equal(qa.state.level, exit.to); transitions.push([from, qa.state.level]);
+}
+assert.ok(transitions.length >= 2, 'the journey physically crosses the intervening areas');
+for (let pickup = 0; pickup < 3; pickup++) {
+  const nearby = world.snacks.filter(food => food.level === qa.state.level && food.room === 'terrace' && !qa.state.found.has(food.id))
+    .sort((a, b) => Math.hypot(a.x - qa.state.player.x, a.y - qa.state.player.y) - Math.hypot(b.x - qa.state.player.x, b.y - qa.state.player.y))[0];
+  assert.ok(nearby, 'the optional terrace detour has a real uncollected snack');
+  qa.navigate(nearby.x, nearby.y, nearby); walkRoute(journey, { onFrame, label: 'optional terrace pickup' });
+  assert.ok(qa.state.found.has(nearby.id), 'each terrace snack is collected by actual walking');
+}
+walkToHome(journey, { onFrame });
+const pickedEnergy = world.snacks.filter(food => qa.state.found.has(food.id)).reduce((sum, food) => sum + food.energy, 0);
+const bankedEnergy = qa.state.bag.reduce((sum, food) => sum + food.energy, 0);
+const consumedEnergy = pickedEnergy - bankedEnergy;
+const energySpent = world.rules.startEnergy + consumedEnergy - qa.state.energy;
+assert.equal(qa.state.found.size, 11, 'the journey takes eight starting pickups and three optional terrace snacks');
+assert.equal(qa.state.bag.length + qa.state.consumedCount, qa.state.found.size, 'all journey food remains accounted for');
+assert.ok(qa.state.bag.length > 0 && minimumEnergy > 0, 'a prudent final detour retains a haul and enough fuel');
+assert.equal(qa.finishRun(), true, 'the actual final couch explicitly banks the remaining food');
+assert.equal(qa.state.bankedCount, qa.state.bag.length, 'only carried food is banked');
+console.log(`PASS: physical ${transitions.map(([from, to]) => `${from}→${to}`).join(', ')} journey picks ${qa.state.found.size}, eats ${qa.state.consumedCount} (${consumedEnergy} energy), banks ${qa.state.bankedCount} (${bankedEnergy} energy), spends ${energySpent.toFixed(2)}, and finishes in ${qa.state.elapsed.toFixed(2)}s at ${qa.state.energy.toFixed(2)} energy (minimum ${minimumEnergy.toFixed(2)})`);

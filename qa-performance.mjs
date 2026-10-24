@@ -15,10 +15,10 @@ const near = (actual, expected, tolerance, message) => assert.ok(Math.abs(actual
 
 const refreshRates = [60, 120, 144, 240];
 const results = [];
-for (const level of [0, 1]) for (const hz of refreshRates) {
+for (const level of [0, 1, 2, 3]) for (const hz of refreshRates) {
   const run = createGameHarness({ frameMs: 1000 / hz });
   run.qa.begin();
-  if (level === 1) run.qa.changeFloor(1, run.world.floors[1].stair);
+  if (level !== 0) run.qa.changeFloor(level, run.world.floors[level].stair || run.world.floors[level].doors[0]);
   run.resetMetrics();
   advance(run, 2000, [1000 / hz]);
   assert.ok(run.metrics.draws <= 121, `${hz}Hz display never renders more than 60fps plus one boundary frame (${run.metrics.draws})`);

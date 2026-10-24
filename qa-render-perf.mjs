@@ -73,7 +73,7 @@ for (let frame = 0; frame < 90; frame++) cached.draw();
 assert.ok(cached.getAllocatedPixels() <= 8000000, '4K resize respects the same total allocation budget');
 
 const floorBuilds = subject.getPerformanceStats().architectureBuilds;
-for (const level of [1, 0, 2, 0, 1, 2, 0]) {
+for (const level of [1, 0, 2, 3, 0, 1, 3, 2, 0]) {
   subject.world.activateFloor(level);
   cached.state.level = level;
   Object.assign(cached.state.player, { ...(subject.world.floors[level].stair || subject.world.floors[level].doors[0]), level });
@@ -129,6 +129,10 @@ for (const [width, height] of [[390, 844], [844, 390]]) {
   assert.ok(phone.getAllocatedPixels() <= 8000000, 'phone caches stay bounded');
 }
 const montage = createRenderer(true, 390, 844);
+montage.renderer.world.activateFloor(montage.renderer.world.home.level);
+montage.state.level = montage.renderer.world.home.level;
+Object.assign(montage.state.player, montage.renderer.world.home);
+montage.renderer.setFloor(montage.state.player);
 montage.state.ending = { elapsed: 0, active: true, seated: false, tvOn: false, paused: false };
 montage.renderer.setTVVideo({ readyState: 4, videoWidth: 320, videoHeight: 180 });
 montage.draw();

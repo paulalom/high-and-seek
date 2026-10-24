@@ -104,7 +104,7 @@ console.log('PASS: carried food rescues conversation-sized costs, total-resource
 
 qa.restart(); qa.begin(); supplyKinds(run, ['soda', 'chips', 'pizza']); qa.state.energy = 100;
 qa.spendEnergy(smallestRefill); assert.equal(qa.state.consumedCount, 1); assert.equal(qa.state.bag.length, 2);
-qa.state.leftHome = true; Object.assign(qa.state.player, world.home);
+qa.state.leftHome = true; qa.changeFloor(world.home.level, world.home);
 assert.equal(qa.finishRun(), true); assert.equal(qa.state.bankedCount, 2, 'banking scores food still in the bag, not every pickup');
 const recordKey = 'high-and-seek-best-haul-v2', record = JSON.parse(run.storage.get(recordKey));
 assert.equal(record.score, 2); assert.equal(run.storage.has('high-and-seek-best-haul-v1'), false, 'the new scoring mode does not overwrite older haul records');
@@ -115,7 +115,7 @@ qa.restart(); assert.equal(qa.state.bag.length, 0); assert.equal(qa.state.consum
 assert.equal(run.storage.get(recordKey), JSON.stringify(record), 'restart retains the banked record');
 
 const empty = createGameHarness(); empty.qa.begin(); supplyKinds(empty, ['soda']); empty.qa.state.energy = 100 - smallestRefill; empty.qa.autoEat(false); empty.qa.state.leftHome = true;
-Object.assign(empty.qa.state.player, empty.world.home); assert.equal(empty.qa.state.found.size, 1); assert.equal(empty.qa.state.bag.length, 0);
+empty.qa.changeFloor(empty.world.home.level, empty.world.home); assert.equal(empty.qa.state.found.size, 1); assert.equal(empty.qa.state.bag.length, 0);
 assert.equal(empty.qa.canFinishRun(), false, 'an entirely eaten haul cannot be banked even with pickup history');
 console.log('PASS: remaining-food scoring, banked snapshot, separate records, empty-bag guard and clean restart');
 

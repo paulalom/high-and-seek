@@ -29,7 +29,7 @@ for (const [index, id] of ids.entries()) {
   assert.equal(debug.active, true, `${id} has an active speaking phrase`);
   assert.equal(debug.guestId, id, 'only the current speaker owns the phrase');
   assert.ok(Number.isFinite(debug.pitch) && debug.pitch > 50 && debug.pitch < 500, 'voice uses a plausible voiced fundamental');
-  assert.ok(debug.scheduledUntil > context.currentTime && debug.scheduledUntil - context.currentTime <= 3.1, 'each phrase finishes before the next monologue line');
+  assert.ok(debug.scheduledUntil > context.currentTime && debug.scheduledUntil - context.currentTime <= 3.1, 'each synthesized phrase has a short, finite duration');
   assert.ok(debug.activeNodes > 0 && debug.activeNodes < 40, 'one speech graph has a bounded node count');
   pitches.push(debug.pitch); profiles.push(debug.profileId);
   const sources = context.sources.slice(before);
@@ -94,9 +94,17 @@ assert.equal(createdContexts.length, 1, 'the sound gesture creates one shared co
 const appContext = createdContexts[0];
 assert.ok(appContext.sources.some(source => source.kind === 'bufferSource'), 'enabling sound during a conversation starts guest chatter');
 const speechSources = () => appContext.sources.filter(source => source.kind === 'bufferSource');
-const beforeAdvance = speechSources().length;
-run.stepFrame(3300); appContext.advance(3.3);
+const cadence = world.rules.conversationLineDuration;
+const beforeAdvance = speechSources().length, previousPhrase = [...appContext.sources];
+const openingIndex = qa.state.conversation.lineIndex;
+appContext.advance(cadence - .1); run.stepFrame((cadence - .1) * 1000);
+assert.equal(qa.state.conversation.lineIndex, openingIndex, 'speech and text retain the opening sentence before the declared cadence');
+assert.equal(speechSources().length, beforeAdvance, 'a nearly elapsed sentence does not schedule its successor early');
+appContext.advance(.2); run.stepFrame(200);
+assert.equal(qa.state.conversation.lineIndex, (openingIndex + 1) % guest.monologue.length, 'the written sentence advances at the declared cadence');
 assert.ok(speechSources().length > beforeAdvance, 'the next written monologue line starts a new spoken phrase');
+assert.ok(previousPhrase.every(source => source.stopped <= appContext.currentTime && source.disconnections > 0), 'advancing a sentence releases all sources from the preceding phrase');
+assert.ok(appContext.pendingSources().some(source => source.kind === 'bufferSource'), 'the replacement phrase remains active after the sentence change');
 qa.openPause(); appContext.advance(0);
 assert.equal(appContext.pendingSources().filter(source => source.kind === 'bufferSource').length, 0, 'pause cancels guest speech');
 const pausedSourceCount = speechSources().length;
@@ -110,8 +118,10 @@ run.document.hidden = false; run.dispatch('document', 'visibilitychange'); qa.cl
 run.dispatch('sound-button', 'click'); appContext.advance(0);
 assert.equal(appContext.pendingSources().filter(source => source.kind === 'bufferSource').length, 0, 'the existing sound toggle mutes active chatter');
 const mutedSourceCount = speechSources().length;
-run.stepFrame(3300);
+const mutedLineIndex = qa.state.conversation.lineIndex;
+run.stepFrame((cadence + .1) * 1000);
 assert.equal(speechSources().length, mutedSourceCount, 'muted monologue progression does not make voices');
+assert.equal(qa.state.conversation.lineIndex, (mutedLineIndex + 1) % guest.monologue.length, 'muting preserves the faster written sentence cadence');
 run.dispatch('sound-button', 'click'); await Promise.resolve();
 assert.equal(createdContexts.length, 1, 'unmuting reuses the shared context');
 for (let press = 0; press < 12; press++) qa.interact(); appContext.advance(0);
@@ -124,7 +134,7 @@ assert.equal(appContext.closeCalls, 0, 'restart retains the shared context for l
 qa.begin(); qa.changeFloor(1, world.floors[1].stair);
 const nextGuest = qa.state.guests[0];
 Object.assign(qa.state.player, { x: nextGuest.x, y: nextGuest.y }); qa.state.talkCooldown = 0; qa.checkConversation();
-run.stepFrame(16000); appContext.advance(0);
+run.stepFrame(world.rules.conversationDuration * 1000); appContext.advance(0);
 assert.equal(qa.state.conversation, null, 'the normal long-story timeout still ends a voiced conversation');
 assert.equal(appContext.pendingSources().filter(source => source.kind === 'bufferSource').length, 0, 'natural conversation completion cancels any remaining voice');
 Object.assign(qa.state.player, { x: nextGuest.x, y: nextGuest.y }); qa.state.talkCooldown = 0; qa.state.energy = .01; qa.checkConversation();
@@ -132,6 +142,90 @@ assert.ok(qa.state.conversation); run.stepFrame(100); appContext.advance(0);
 assert.equal(qa.state.failed, true, 'the energy-failure path remains active during a voiced conversation');
 assert.equal(appContext.pendingSources().filter(source => source.kind === 'bufferSource').length, 0, 'failure silences chatter immediately');
 console.log('PASS: sound gesture, monologue updates, pause/resume, hidden tabs, mute/unmute, escape and restart control real guest speech');
+
+let mashContext;
+class MashContext extends FakeAudioContext { constructor() { super(); mashContext = this; } }
+const mashRun = createGameHarness({ audioContextFactory: MashContext }), mashQA = mashRun.qa;
+mashQA.begin(); mashQA.changeFloor(1, mashRun.world.floors[1].stair);
+const mashGuest = mashQA.state.guests.find(person => person.id === 'houseGuest');
+Object.assign(mashQA.state.player, { x: mashGuest.x, y: mashGuest.y }); mashQA.state.talkCooldown = 0;
+assert.equal(mashQA.checkConversation(), true);
+mashRun.dispatch('sound-button', 'click'); await Promise.resolve(); await Promise.resolve();
+// Let the toggle chime finish while the opening sentence remains active.
+mashContext.advance(.6); mashRun.stepFrame(600);
+const mashTap = (control, repeat = false) => {
+  if (control === 'mobile') mashRun.dispatch('mobile-grab', 'click');
+  else {
+    const key = control === 'space' ? ' ' : 'e';
+    mashRun.dispatch('window', 'keydown', { key, repeat, target: { closest: () => null }, preventDefault() {} });
+    mashRun.dispatch('window', 'keyup', { key });
+  }
+};
+const neededPresses = mashRun.world.rules.conversationEscapePresses;
+for (let press = 1; press < neededPresses; press++) {
+  const cursor = mashGuest.monologueCursor, firstSource = mashContext.sources.length;
+  const previousSources = mashContext.pendingSources();
+  mashTap(['e', 'space', 'mobile'][(press - 1) % 3]);
+  const conversation = mashQA.state.conversation, newSources = mashContext.sources.slice(firstSource);
+  assert.equal(conversation.escapePresses, press, 'each accepted control increments mash progress once');
+  assert.equal(conversation.lineIndex, cursor % mashGuest.monologue.length, 'each nonfinal mash reads exactly the next sentence');
+  assert.equal(conversation.line, mashGuest.monologue[conversation.lineIndex]);
+  assert.equal(mashGuest.monologueCursor, (cursor + 1) % mashGuest.monologue.length, 'the new spoken sentence consumes one cursor entry');
+  assert.equal(conversation.lineElapsed, 0, 'a mash gives its replacement sentence a fresh timer');
+  assert.ok(mashRun.getNode('conversation-status').textContent.includes(conversation.line), 'the displayed sentence matches the replacement voice');
+  assert.ok(previousSources.every(source => source.stopped <= mashContext.currentTime && source.disconnections > 0), 'each mash cancels and disconnects the preceding phrase');
+  assert.ok(newSources.some(source => source.kind === 'bufferSource') && newSources.length <= 5, 'each accepted mash starts one bounded replacement voice');
+  const voiced = newSources.filter(source => source.kind === 'oscillator');
+  assert.ok(voiced.length > 0 && voiced.every(source => source.detune.events.some(event => event.type === 'set' && event.value > 0)), 'mash pitch feedback affects the newly created voice');
+
+  const ignored = { cursor: mashGuest.monologueCursor, sources: mashContext.sources.length, line: conversation.line, presses: conversation.escapePresses };
+  mashTap('e', true); mashTap('space', true);
+  assert.deepEqual({ cursor: mashGuest.monologueCursor, sources: mashContext.sources.length, line: conversation.line, presses: conversation.escapePresses }, ignored, 'repeated keyboard events neither advance dialogue nor schedule voices');
+  if (press === 4) {
+    mashQA.openPause(); mashContext.advance(0);
+    const pausedSources = mashContext.sources.length;
+    mashTap('e'); mashTap('mobile'); mashRun.stepFrame(1000);
+    assert.equal(mashContext.sources.length, pausedSources, 'paused input schedules no replacement speech');
+    assert.equal(mashContext.pendingSources().length, 0, 'pause cancels the active replacement phrase');
+    assert.equal(conversation.escapePresses, press); assert.equal(mashGuest.monologueCursor, ignored.cursor);
+    assert.equal(conversation.line, ignored.line, 'pause preserves the last displayed mash sentence');
+    mashQA.closeDialog(); await Promise.resolve();
+  }
+}
+const finalCursor = mashGuest.monologueCursor, sourcesBeforeFinal = mashContext.sources.length, energyBeforeFinal = mashQA.state.energy;
+mashTap('e'); mashContext.advance(0);
+assert.equal(mashQA.state.conversation, null, 'the final accepted mash ends the encounter');
+assert.equal(mashGuest.monologueCursor, finalCursor, 'escape consumes no undisplayed final sentence');
+assert.equal(mashContext.sources.length, sourcesBeforeFinal, 'escape creates no unread final phrase');
+assert.equal(mashContext.pendingSources().length, 0, 'escape releases every active replacement voice');
+assert.ok(Math.abs(mashQA.state.energy - energyBeforeFinal + mashRun.world.rules.conversationEscapeCost) < 1e-7, 'the final press retains the existing escape cost');
+mashQA.state.talkCooldown = 0; Object.assign(mashQA.state.player, { x: mashGuest.x, y: mashGuest.y });
+assert.equal(mashQA.checkConversation(), true);
+assert.equal(mashQA.state.conversation.lineIndex, finalCursor, 'a later encounter resumes at the next unheard sentence');
+assert.equal(mashQA.state.conversation.line, mashGuest.monologue[finalCursor]);
+mashRun.dispatch('window', 'pagehide', { persisted: false }); mashContext.advance(0);
+assert.equal(mashContext.pendingSources().length, 0, 'teardown releases the resumed voice');
+assert.equal(mashContext.closeCalls, 0, 'mash replacement never closes the shared context');
+console.log('PASS: accepted E/Space/mobile mashes replace and pitch the new voice; repeat, pause, final escape and resumed cursor preserve speech ownership');
+
+const sentenceContext = new FakeAudioContext(), sentenceVoice = api.create();
+sentenceVoice.setContext(sentenceContext); sentenceVoice.setEnabled(true);
+let sentenceChecks = 0, longestPhrase = 0;
+for (const person of world.guests) for (const [index, line] of person.monologue.entries()) {
+  const firstSource = sentenceContext.sources.length;
+  sentenceVoice.speak(person.id, line, index);
+  const debug = sentenceVoice.getDebug(), duration = debug.scheduledUntil - sentenceContext.currentTime;
+  assert.ok(debug.active && debug.activeNodes > 0 && debug.activeNodes < 40, `${person.name} sentence ${index} uses one bounded speech graph`);
+  assert.ok(duration > 0 && duration < cadence, `${person.name} sentence ${index} finishes before its written sentence changes`);
+  assert.ok(sentenceContext.sources.slice(firstSource).every(source => Number.isFinite(source.stopped) && source.stopped < sentenceContext.currentTime + cadence), 'all actual sentence sources end before the next text boundary');
+  longestPhrase = Math.max(longestPhrase, duration); sentenceChecks++;
+  sentenceContext.advance(cadence);
+  assert.equal(sentenceVoice.getDebug().activeNodes, 0, 'every sentence naturally releases its full speech graph');
+  assert.equal(sentenceContext.pendingSources().length, 0, 'a completed sentence leaves no future audio sources');
+}
+sentenceVoice.dispose();
+assert.equal(sentenceContext.closeCalls, 0, 'sentence completion never closes the shared audio context');
+console.log(`PASS: all ${sentenceChecks} actual monologue phrases finish within the ${cadence}s text cadence (longest ${longestPhrase.toFixed(3)}s) and release their audio graphs`);
 
 let deferredContext;
 class DeferredContext extends FakeAudioContext {

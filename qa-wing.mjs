@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createGameHarness } from './qa-pathing.mjs';
+import { walkToHome } from './qa-route-helpers.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const near = (actual, expected, label, tolerance = .025) => assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: expected ${expected}, got ${actual}`);
@@ -57,11 +58,45 @@ function route(world, start, goal) {
   for (let index = last; index !== first; index = previous[index]) points.push(point(index));
   points.push(point(first)); return points.reverse();
 }
+function coax(fixture) {
+  const { world, state, simulation, runtime } = fixture, dog = runtime.dog;
+  if (!['sniffing', 'waiting', 'sleeping'].includes(dog.status)) return;
+  for (const target of route(world, state.player, dog)) {
+    for (let step = 0; Math.hypot(state.player.x - dog.x, state.player.y - dog.y) > 1.35 && Math.hypot(target.x - state.player.x, target.y - state.player.y) > .035 && step < 500; step++) {
+      const dx = target.x - state.player.x, dy = target.y - state.player.y, distance = Math.hypot(dx, dy), stride = Math.min(distance, 2.6 * .05);
+      const moved = world.moveCircle(state.player.x, state.player.y, dx / distance * stride, dy / distance * stride, .22, 2);
+      assert.ok(moved.distance > .0001, 'the player can walk back to the distracted dog');
+      Object.assign(state.player, { x: moved.x, y: moved.y }); simulation.update(.05, state);
+    }
+    if (Math.hypot(state.player.x - dog.x, state.player.y - dog.y) <= 1.35) break;
+  }
+  assert.equal(simulation.interact(state), true, 'a nearby explicit recall resumes the distracted escort');
+}
+function guide(fixture, goal) {
+  const { world, state, simulation, runtime } = fixture;
+  for (const target of route(world, state.player, goal)) {
+    for (let step = 0; Math.hypot(target.x - state.player.x, target.y - state.player.y) > .035 && step < 500; step++) {
+      coax(fixture);
+      const dx = target.x - state.player.x, dy = target.y - state.player.y, distance = Math.hypot(dx, dy), stride = Math.min(distance, 2.6 * .05);
+      const moved = world.moveCircle(state.player.x, state.player.y, dx / distance * stride, dy / distance * stride, .22, 2);
+      Object.assign(state.player, { x: moved.x, y: moved.y }); simulation.update(.05, state);
+      assert.ok(world.isWalkable(runtime.dog.x, runtime.dog.y, .25, 2), 'following corgi routes around walls and themed props');
+      assert.ok(moved.distance > .0001, 'guiding fixture stays connected');
+      assert.equal(runtime.dog.sleeping, false, 'a deliberate escort with the toy break preserves dog energy');
+    }
+    assert.ok(Math.hypot(target.x - state.player.x, target.y - state.player.y) <= .035, 'guiding reaches every doorway waypoint');
+  }
+}
 
 const fixture = direct(), { world, simulation, runtime, state } = fixture, wing = world.wing;
-assert.equal(world.floors.length, 3, 'the wing is its own connected area');
+assert.equal(world.floors.length, 4, 'the pet wing and Midnight Wing are distinct connected areas');
 assert.equal(world.floors[2].rooms.length, 3, 'wing has a snack den, corgi playroom and separate bowl room');
-assert.equal(world.floors[2].stair, undefined, 'wing is a ground-floor doorway extension rather than another staircase');
+assert.ok(!world.floors[0].stair, 'the staircase has moved out of the main mansion');
+assert.equal(world.floors[2].stair.to, 1, 'the clubhouse now contains the upstairs staircase');
+assert.equal(world.floors[1].stair.to, 2, 'upstairs descends back into the clubhouse');
+assert.equal(wing.dog.drain, 2.4, 'Waffles loses energy four times as quickly as before');
+assert.ok(wing.bowl.x >= 26 && wing.bowl.y <= 4.5, 'dinner is at the far northeast end of the pet kitchen');
+assert.ok(world.isWalkable(wing.toy.x, wing.toy.y, .25, 2), 'the midpoint squeaky toy is reachable by the dog');
 assert.equal(world.getRoom(wing.dog.x, wing.dog.y, 2).id, 'corgiPlayroom');
 assert.notEqual(world.getRoom(wing.dog.x, wing.dog.y, 2).id, world.getRoom(wing.bowl.x, wing.bowl.y, 2).id, 'feeding means guiding the dog into another room');
 assert.equal(runtime.dog.energy, wing.dog.startEnergy);
@@ -77,23 +112,33 @@ advanceDirect(fixture, 20);
 near(runtime.dog.energy, beforeHunger - wing.dog.drain * 20, 'hungry corgi energy uses elapsed active-wing time');
 const whines = simulation.drainEvents().filter(event => event.type === 'whine');
 assert.ok(whines.length > 0 && whines.length <= 3, 'a hungry dog whines occasionally rather than every frame');
+// Start the escort fresh after independently checking twenty seconds of hunger.
+simulation.reset(); Object.assign(state.player, { x: runtime.dog.x, y: runtime.dog.y });
 const haulBefore = state.found.size, energyBefore = state.energy;
 assert.equal(simulation.interact(state), true, 'nearby player can invite the dog to follow');
 assert.equal(runtime.dog.following, true);
 assert.equal(state.found.size, haulBefore, 'guiding does not consume a banked or carried snack');
 assert.equal(state.energy, energyBefore, 'dog interaction does not refill player energy');
 assert.equal(simulation.interact(state), false, 'a following dog does not steal the food action repeatedly');
-const goal = { x: wing.bowl.x, y: wing.bowl.y }, points = route(world, state.player, goal);
-for (const target of points) {
-  for (let step = 0; Math.hypot(target.x - state.player.x, target.y - state.player.y) > .035 && step < 500; step++) {
-    const dx = target.x - state.player.x, dy = target.y - state.player.y, distance = Math.hypot(dx, dy), stride = Math.min(distance, 2.6 * .05);
-    const moved = world.moveCircle(state.player.x, state.player.y, dx / distance * stride, dy / distance * stride, .22, 2);
-    Object.assign(state.player, { x: moved.x, y: moved.y }); simulation.update(.05, state);
-    assert.ok(world.isWalkable(runtime.dog.x, runtime.dog.y, .25, 2), 'following corgi routes around walls and props');
-    assert.ok(moved.distance > .0001, 'guiding fixture stays connected to the bowl');
-  }
-  assert.ok(Math.hypot(target.x - state.player.x, target.y - state.player.y) <= .035, 'guiding reaches every doorway waypoint');
-}
+guide(fixture, wing.toy);
+assert.equal(simulation.canPlay(state), true, `the actual escort reaches the toy with Waffles nearby: ${JSON.stringify({ player: state.player, dog: runtime.dog, toy: world.wing.toy })}`);
+const beforePlay = runtime.dog.energy, playerBeforePlay = state.energy, haulBeforePlay = state.found.size;
+simulation.drainEvents(); assert.equal(simulation.play(state), true);
+near(runtime.dog.energy, Math.min(100, beforePlay + 25), 'toy restores twenty-five dog energy');
+assert.equal(state.energy, playerBeforePlay, 'toy gives no player energy');
+assert.equal(state.found.size, haulBeforePlay, 'toy changes no carried or banked food');
+assert.equal(runtime.toy.used, true); assert.ok(runtime.toy.usedAt > 0);
+assert.equal(simulation.drainEvents().filter(event => event.type === 'play').length, 1, 'toy emits one play event');
+const afterPlay = runtime.dog.energy;
+assert.equal(simulation.play(state), false, 'toy cannot be farmed repeatedly in one run');
+near(runtime.dog.energy, afterPlay, 'repeated toy input adds no energy');
+const playPosition = { x: runtime.dog.x, y: runtime.dog.y }, playClock = runtime.clock;
+guide(fixture, { x: wing.toy.x + 2, y: wing.toy.y }); advanceDirect(fixture, .8);
+assert.ok(runtime.clock < runtime.dog.playUntil, 'play hold lasts two seconds');
+near(runtime.dog.x, playPosition.x, 'toy play holds the dog in place'); near(runtime.dog.y, playPosition.y, 'toy play holds the dog in place');
+near(runtime.dog.energy, afterPlay - wing.dog.drain * (runtime.clock - playClock), 'hunger continues during the short play break');
+advanceDirect(fixture, .6);
+guide(fixture, wing.bowl);
 for (let step = 0; !runtime.taskCompleted && step < 300; step++) advanceDirect(fixture, .05);
 assert.equal(runtime.taskCompleted, true, 'leading the corgi to its bowl completes the task');
 assert.equal(runtime.dog.happy, true);
@@ -116,10 +161,18 @@ near(sleepy.runtime.dog.x, nap.x, 'sleeping dog stays put'); near(sleepy.runtime
 assert.equal(sleepy.simulation.drainEvents().filter(event => event.type === 'whine' || event.type === 'sleep').length, 0, 'sleep is quiet and not retriggered each frame');
 assert.equal(sleepy.simulation.interact(sleepy.state), true, 'player can wake the sleepy corgi and still complete the task');
 assert.equal(sleepy.runtime.dog.sleeping, false); assert.equal(sleepy.runtime.dog.following, true); assert.equal(sleepy.runtime.dog.energy, 25);
+guide(sleepy, sleepy.world.wing.toy);
+assert.equal(sleepy.simulation.play(sleepy.state), true, 'a woken dog can still use its unused toy');
+advanceDirect(sleepy, 2.1); guide(sleepy, sleepy.world.wing.bowl);
+for (let step = 0; !sleepy.runtime.taskCompleted && step < 300; step++) advanceDirect(sleepy, .05);
+assert.equal(sleepy.runtime.taskCompleted, true, 'wake plus toy break can recover the entire longer escort');
 sleepy.simulation.reset();
 assert.equal(sleepy.simulation.getState().taskCompleted, false);
 assert.equal(sleepy.simulation.getState().dog.energy, wing.dog.startEnergy);
 assert.equal(sleepy.simulation.getState().consumed.size, 0, 'a fresh run resets dog task and the eater supply');
+assert.equal(sleepy.simulation.getState().toy.used, false, 'a fresh run restores the single toy use');
+assert.equal(sleepy.simulation.getState().toy.usedAt, 0);
+assert.equal(sleepy.simulation.getState().dog.playUntil, 0);
 console.log('PASS: zero-energy sleep, quiet nap, recoverable waking and fresh-run reset');
 
 const separated = direct();
@@ -209,29 +262,24 @@ for (let x = Math.floor((carried.x - 1.15) * 2) / 2; x <= carried.x + 1.15; x +=
 assert.ok(approach); Object.assign(game.state.player, approach); game.state.discovered.add(carried.id); game.collect(carried);
 assert.ok(game.state.found.has(carried.id), 'player can still collect available wing food into the real haul');
 // This route test needs a carried surplus as well as fuel for the trip home.
-for (const extra of map.snacks.filter(snack => snack.level === 2 && !game.state.found.has(snack.id) && !game.state.wing.consumed.has(snack.id)).slice(0, 3)) {
+for (const extra of map.snacks.filter(snack => snack.level === 2 && !game.state.found.has(snack.id) && !game.state.wing.consumed.has(snack.id)).slice(0, 5)) {
   let point = null;
   for (let x = Math.floor((extra.x - 1.15) * 2) / 2; x <= extra.x + 1.15; x += .5) for (let y = Math.floor((extra.y - 1.15) * 2) / 2; y <= extra.y + 1.15; y += .5) if (map.isWalkable(x, y) && Math.hypot(x - extra.x, y - extra.y) <= map.collectionRadius && map.getRoom(x, y)?.id === extra.room) point = { x, y };
   assert.ok(point); Object.assign(game.state.player, point); game.state.energy = 100; game.state.discovered.add(extra.id); game.collect(extra);
 }
 game.state.leftHome = true;
 Object.assign(game.state.player, { x: map.home.x, y: map.home.y });
-assert.equal(game.finishRun(), false, 'wing coordinates never bank a haul at the downstairs couch position');
+assert.equal(game.finishRun(), false, 'pet-wing coordinates never bank a haul at the final couch position');
 game.state.energy = 100; Object.assign(game.state.player, map.floors[2].doors[0]); advance(run, 1);
-game.headHome();
-for (let frame = 0; game.getPath().length && frame < 4000 && !game.state.failed; frame++) run.stepFrame();
-assert.equal(game.state.level, 2, 'return button routes to the exit without remotely leaving the wing');
-assert.ok(game.canUseDoor()); game.interact(); assert.equal(game.state.level, 0);
-const restingEnergy = game.state.wing.dog.energy; advance(run, 2);
-assert.equal(game.state.wing.dog.energy, restingEnergy, 'leaving the wing preserves the dog task instead of draining it offscreen');
-game.headHome();
-for (let frame = 0; game.getPath().length && frame < 5000 && !game.state.failed; frame++) run.stepFrame();
+walkToHome(run);
 assert.equal(game.state.failed, false); assert.ok(map.isHome(game.state.player.x, game.state.player.y));
+const restingEnergy = game.state.wing.dog.energy; advance(run, 2);
+assert.equal(game.state.wing.dog.energy, restingEnergy, 'the unaccompanied pet task does not drain outside its wing');
 const carriedAtHome = game.state.bag.length; assert.ok(carriedAtHome > 0, 'wing return retains a surplus after auto-eating for energy');
 assert.equal(game.finishRun(), true, 'wing haul can return through the doorway and bank at the real couch');
 assert.equal(game.state.bankedCount, carriedAtHome, 'the wing route banks only its remaining food');
 game.restart(); assert.equal(game.state.level, 0); assert.equal(game.state.wing.taskCompleted, false); assert.equal(game.state.wing.consumed.size, 0);
-console.log('PASS: explicit doorway transitions, eaten-food collection/hint guards, ground-only banking, return route and restart');
+console.log('PASS: explicit doorway transitions, eaten-food collection/hint guards, final-snug-only banking, return route and restart');
 
 for (const hz of [60, 120, 144, 240]) {
   const performance = createGameHarness({ seed: 13 }); performance.qa.begin(); performance.qa.changeFloor(2, performance.world.floors[2].doors[0]);

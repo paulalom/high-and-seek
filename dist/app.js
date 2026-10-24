@@ -16,30 +16,44 @@
   const renderer = new window.MansionRenderer(canvas, world);
   const guestBrain = window.HSGuestBrain.create(world);
   const wingSimulation = window.HSWing.create(world);
+  const stealthSimulation = window.HSStealth.create(world);
   const chatter = window.HSChatter.create();
   const munching = window.HSMunching.create();
   const music = window.HSMusic.create();
   const tvVideo = $('lounge-tv-video');
   const keys = new Set();
   const createGuests = () => world.guests.map(guest => ({ ...guest, routeIndex: 0, monologueCursor: 0 }));
-  const state = { level: 0, player: { ...world.start, level: 0, facing: 1, moving: false }, guests: createGuests(), wing: wingSimulation.getState(), conversation: null, ending: null, talkCooldown: 0, stairsCooldown: 0, nearStairs: false, nearDoor: false, found: new Set(), bag: [], consumedCount: 0, bankedCount: 0, discovered: new Set(), haulCounts: {}, leftHome: false, nearHome: true, homeAvailable: false, hintTarget: null, activeRoom: world.home.room, paused: false, started: false, elapsed: 0, hints: rules.hints, visited: new Set([world.home.room]), won: false, failed: false, energy: rules.startEnergy, sprinting: false, warnedLow: false, refillFlash: 0, refillAmount: 0 };
+  const startRoom = world.getRoom(world.start.x, world.start.y, world.start.level)?.id;
+  const state = { level: 0, player: { ...world.start, level: 0, facing: 1, moving: false }, guests: createGuests(), wing: wingSimulation.getState(), conversation: null, ending: null, talkCooldown: 0, stairsCooldown: 0, nearStairs: false, nearDoor: false, nearToy: false, found: new Set(), bag: [], consumedCount: 0, bankedCount: 0, discovered: new Set(), haulCounts: {}, leftHome: false, nearHome: false, homeAvailable: false, hintTarget: null, activeRoom: startRoom, paused: false, started: false, elapsed: 0, hints: rules.hints, visited: new Set(startRoom ? [startRoom] : []), won: false, failed: false, energy: rules.startEnergy, sprinting: false, warnedLow: false, refillFlash: 0, refillAmount: 0 };
+  state.stealth = stealthSimulation.getState();
   const unavailableSnacks = { has: id => state.found.has(id) || state.wing.consumed.has(id) };
   const dialog = $('game-dialog');
   const FRAME_INTERVAL = 1000 / 60, IDLE_INTERVAL = 1000 / 30, HUD_INTERVAL = 100, FRAME_EPSILON = .001;
-  let path = [], autoCollect = null, toastTimeout, roomTimeout, announcedRoom = world.home.room, lastFrame = performance.now(), lastTick = null, lastHudUpdate = -Infinity, renderDirty = true, sound = false, audio;
+  let path = [], autoCollect = null, travelIntent = null, toastTimeout, roomTimeout, announcedRoom = startRoom, lastFrame = performance.now(), lastTick = null, lastHudUpdate = -Infinity, renderDirty = true, sound = false, audio;
   let chatterRequest = 0;
   let lastMusicUpdate = -Infinity;
+  let terraceMusic = false;
   const chimeNodes = new Set();
   let best = 0, bestRunTime = Infinity;
   try { const record = JSON.parse(localStorage.getItem('high-and-seek-best-haul-v2') || 'null'); if (record && Number.isFinite(record.score) && record.score >= 0 && Number.isFinite(record.elapsed)) { best = record.score; bestRunTime = record.elapsed; } } catch { /* Local storage is optional. */ }
   const timeLabel = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
   function musicSnapshot() {
+    // Keep the quiet arrangement inside the terrace and the hallway-accessed snug.
+    // A small return threshold prevents boundary jitter from reversing the fade.
+    if (state.level !== world.midnight.level) terraceMusic = false;
+    else {
+      const room = world.getRoom(state.player.x, state.player.y)?.id;
+      const terrace = world.floors[state.level].rooms.find(room => room.id === 'terrace');
+      if (room === 'terrace' || room === world.home.room) terraceMusic = true;
+      else if (state.player.y < terrace.y - .35) terraceMusic = false;
+    }
     if (!sound || document.hidden || state.failed || dialog.open || (state.ending ? state.ending.paused : state.paused) || state.won && !state.ending) return { mode: 'silent', threat: 0, duck: false };
     if (state.ending) return { mode: 'couch', threat: 0, duck: false };
     if (state.conversation) return { mode: 'conversation', threat: 0, duck: true };
     let threat = 0;
     if (state.level === 1) for (const guest of state.guests) if (guest.level === state.level && guest.chasing) threat = Math.max(threat, Math.max(0, 1 - Math.hypot(guest.x - state.player.x, guest.y - state.player.y) / 7));
-    return { mode: state.level === 1 ? 'upstairs' : 'lounge', threat, duck: false };
+    const mode = state.level === world.midnight.level ? (terraceMusic ? 'terrace' : 'midnight') : state.level === world.wing.level ? 'snack' : state.level === 1 ? 'upstairs' : 'lounge';
+    return { mode, threat, duck: false };
   }
   function syncMusic(force = true, now = performance.now()) {
     if (!force && now - lastMusicUpdate < HUD_INTERVAL) return;
@@ -71,29 +85,48 @@
     setAttribute($('energy-meter'), 'aria-valuenow', amount);
     setAttribute($('energy-meter'), 'aria-valuetext', `${amount} percent energy`);
     if ($('energy-panel').dataset.level !== level) $('energy-panel').dataset.level = level;
-    setText('energy-status', state.failed ? 'Out of juice' : state.won ? 'Haul banked. Time to chill.' : state.conversation ? 'Trapped in a story. Mash E!' : !state.started ? 'Auto-eat · only when the full refill fits' : state.sprinting ? 'Sprinting · burns extra' : state.bag.length ? 'Auto-eat ready · no energy wasted' : level === 'critical' ? 'Empty bag. Food or couch. Fast.' : level === 'low' ? 'Empty bag · find more fuel' : 'Collect now. Eat when you need it.');
+    setText('energy-status', state.failed ? 'Out of juice' : state.won ? 'Haul banked. Time to chill.' : state.conversation?.unskippable ? 'Listening · energy still drains' : state.conversation ? 'Trapped in a story. Mash E!' : !state.started ? 'Auto-eat · only when the full refill fits' : state.sprinting ? 'Sprinting · burns extra' : state.bag.length ? 'Auto-eat ready · no energy wasted' : level === 'critical' ? 'Empty bag. Food or couch. Fast.' : level === 'low' ? 'Empty bag · find more fuel' : 'Collect now. Eat when you need it.');
     setText('timer', timeLabel(state.elapsed));
-    setText('mission-status', state.won ? 'Haul banked. Another round?' : state.homeAvailable ? state.nearHome ? 'At the couch? Press E to finish.' : 'Push your luck, or take your haul home.' : 'Collect munchies. Then return to the couch.');
-    setText('return-status', state.won ? 'RUN BANKED · ENJOY THE TV' : state.level === 2 ? 'MAIN MANSION · THROUGH THE DOOR' : state.level === 1 ? 'DOWNSTAIRS FIRST · USE THE STAIRS' : state.homeAvailable && state.nearHome ? 'PRESS E TO BANK YOUR HAUL' : 'COUCH & TV · GROUND FLOOR');
+    const homeExit = nextExitToward(world.home.level);
+    setText('mission-status', state.won ? 'Haul banked. Another round?' : state.nearHome && !state.bag.length ? 'Empty bag? Search the terrace for one last snack.' : state.homeAvailable ? state.nearHome ? 'At the couch? Press E to finish.' : 'Another snack detour, or head to the couch.' : 'Collect munchies. The Midnight hallway leads to your couch.');
+    setText('return-status', state.won ? 'RUN BANKED · ENJOY THE TV' : state.nearHome ? state.bag.length ? 'PRESS E TO BANK YOUR HAUL' : 'BRING AN UNEATEN SNACK TO BANK' : homeExit ? `${world.floors[homeExit.exit.to].name.toUpperCase()} · ${homeExit.kind === 'stairs' ? 'USE THE STAIRS' : 'THROUGH THE DOOR'}` : 'ACROSS THE TERRACE · TV SNUG');
     setText('floor-label', world.floors[state.level].name);
-    setText('stairs-label', state.level === 0 ? 'Head upstairs' : 'Go downstairs');
-    setText('stairs-status', state.level === 0 ? 'MORE FOOD · MORE SMALL TALK' : 'YOUR COUCH IS ON GROUND FLOOR');
-    setHidden('stairs-button', !world.floors[state.level].stair);
+    setText('stairs-label', state.level === 1 ? 'Down to Waffles' : 'Head upstairs');
+    setText('stairs-status', state.level === 0 ? 'VIA WAFFLES’S CLUBHOUSE' : state.level === 1 ? 'BACK TO THE SNACK & PAWS WING' : 'CLUBHOUSE STAIRS · MORE MUNCHIES');
+    setHidden('stairs-button', !world.floors[state.level].stair && state.level !== world.start.level);
     setHidden('wing-button', !world.floors[state.level].doors?.length);
-    setText('wing-label', state.level === 2 ? 'Main mansion' : 'Snack & Paws wing');
-    setText('wing-status', state.level === 2 ? 'YOUR COUCH IS THROUGH THE DOOR' : 'A HUNGRY PUP NEEDS YOUR HELP');
+    setText('wing-label', currentDoor()?.label || 'Wing doorway');
+    setText('wing-status', state.level === world.midnight.level ? 'BACK TO THE UPSTAIRS ROOMS' : currentDoor()?.to === world.midnight.level ? 'MIDNIGHT HALLWAY · YOUR FINAL COUCH' : state.level === world.wing.level ? 'BACK TO THE GROUND FLOOR' : 'WAFFLES · THE WAY UPSTAIRS');
     setHidden('dog-task', state.level !== world.wing.level);
     const inWing = state.level === world.wing.level;
     if ($('game-stage').classList.contains('in-wing') !== inWing) $('game-stage').classList.toggle('in-wing', inWing);
     const dog = state.wing.dog;
-    setText('dog-task-title', state.wing.taskCompleted ? 'Dinner delivered ♥' : dog.sleeping ? 'Waffles is napping' : dog.following ? 'Lead Waffles to dinner' : 'Waffles needs dinner');
-    setText('dog-task-status', state.wing.taskCompleted ? 'One very happy corgi.' : dog.sleeping ? 'Press E nearby to wake him.' : dog.following ? 'Walk to the bowl in the pet kitchen.' : 'Press E nearby. He’ll follow you.');
-    setAttribute($('home-button'), 'aria-label', state.level === 2 ? 'Return to the main mansion doorway' : state.level === 1 ? 'Return to the downstairs staircase' : 'Return to the lounge couch');
+    setText('dog-task-title', state.wing.taskCompleted ? 'Dinner delivered ♥' : dog.sleeping ? 'Waffles is napping' : ['sniffing', 'waiting'].includes(dog.status) ? 'Waffles got distracted' : dog.following ? 'Lead Waffles to dinner' : 'Waffles needs dinner');
+    setText('dog-task-status', state.wing.taskCompleted ? 'Waffles will follow you to the couch.' : dog.sleeping ? 'Press E nearby to wake him.' : ['sniffing', 'waiting'].includes(dog.status) ? 'Go back and press E to coax him along.' : dog.following ? state.wing.toy?.used ? 'Follow the paws to the far kitchen bowl.' : 'Far kitchen bowl · squeaky break on the way.' : 'Press E nearby. Dinner is across the wing.');
+    setAttribute($('home-button'), 'aria-label', homeExit ? `Head to the couch via ${world.floors[homeExit.exit.to].name}` : 'Head to the couch in the TV snug');
+    updateNoiseUI();
     updateMap();
     if (state.energy >= 35) state.warnedLow = false;
     if (state.started && !state.paused && !state.failed && !state.conversation && state.energy <= 25 && !state.warnedLow) {
       state.warnedLow = true; toast('You’re running on fumes.', 'Refuel or head for the couch. Unbanked munchies are at risk.', 'ϟ', 6000);
     }
+  }
+  function updateNoiseUI() {
+    const midnight = state.level === world.midnight.level, noise = state.stealth;
+    setHidden('noise-panel', !midnight || state.won);
+    for (const [name, value] of [['in-midnight', midnight], ['in-resident-lecture', !!state.conversation?.unskippable]]) {
+      if ($('game-stage').classList.contains(name) !== value) $('game-stage').classList.toggle(name, value);
+    }
+    if (!midnight) return;
+    const amount = Math.ceil(noise.noise), safe = world.getRoom(state.player.x, state.player.y, state.level)?.id === world.home.room;
+    setText('noise-value', safe ? 'SAFE' : `${amount}%`);
+    setStyle($('noise-fill'), 'width', `${Math.round(noise.noise * 10) / 10}%`);
+    setAttribute($('noise-meter'), 'aria-valuenow', amount);
+    setAttribute($('noise-meter'), 'aria-valuetext', safe ? 'TV snug is safe' : `${amount} percent noise`);
+    const status = state.conversation?.unskippable ? `Listen… ${Math.ceil(state.conversation.remaining)}s · no skipping` : safe ? 'TV snug · you can relax here.' : noise.label || 'Walk softly. Someone is sleeping.';
+    setText('noise-status', status);
+    const tone = safe ? 'safe' : ['investigating', 'searching', 'scolding'].includes(noise.mode) ? 'alert' : amount >= 50 ? 'warning' : 'quiet';
+    if ($('noise-panel').dataset.level !== tone) $('noise-panel').dataset.level = tone;
   }
   discoverSnacks(); updateEnergyUI();
   roomTimeout = setTimeout(() => $('room-announcement').classList.remove('show'), 4500);
@@ -151,34 +184,55 @@
     chatter.stop();
     if (!sound || !audio || !conversation || state.paused || document.hidden || state.won || state.failed) return;
     const speak = () => {
-      if (request === chatterRequest && sound && state.conversation === conversation && !state.paused && !document.hidden && !state.won && !state.failed) chatter.speak(conversation.guestId, conversation.line, conversation.lineIndex);
+      if (request === chatterRequest && sound && state.conversation === conversation && !state.paused && !document.hidden && !state.won && !state.failed) chatter.speak(conversation.voiceId || conversation.guestId, conversation.line, conversation.lineIndex);
     };
     if (audio.state === 'suspended') {
       try { Promise.resolve(audio.resume()).then(speak).catch(() => {}); } catch { /* Speech remains optional if audio is blocked. */ }
     } else speak();
   }
   function begin() { if (!state.won && !state.failed && !state.paused) { if (!state.started) lastFrame = performance.now(); state.started = true; renderDirty = true; } }
-  function canFinishRun() { return state.level === 0 && state.started && !state.paused && !state.failed && !state.won && !state.conversation && state.energy > 0 && state.leftHome && state.bag.length > 0 && world.isHome(state.player.x, state.player.y); }
+  function canFinishRun() { return state.level === world.home.level && state.started && !state.paused && !state.failed && !state.won && !state.conversation && state.energy > 0 && state.leftHome && state.bag.length > 0 && world.isHome(state.player.x, state.player.y, state.level); }
   function canUseStairs() { const stair = world.floors[state.level].stair; return !!stair && !state.paused && !state.failed && !state.won && !state.conversation && state.energy > 0 && state.stairsCooldown <= 0 && Math.hypot(state.player.x - stair.x, state.player.y - stair.y) <= stair.radius; }
   function currentDoor() { return world.floors[state.level].doors?.[0] || null; }
+  // Follow the actual area connections, including stairs relocated into a wing.
+  // Only the next leg is walked; every doorway/stair transition still needs E.
+  function nextExitToward(targetLevel) {
+    if (state.level === targetLevel) return null;
+    const seen = new Set([state.level]), queue = [{ level: state.level, first: null }];
+    for (let i = 0; i < queue.length; i++) {
+      const current = queue[i], floor = world.floors[current.level];
+      const exits = [...(floor.stair ? [{ kind: 'stairs', exit: floor.stair }] : []), ...(floor.doors || []).map(exit => ({ kind: 'door', exit }))];
+      for (const step of exits) {
+        if (seen.has(step.exit.to)) continue;
+        const first = current.first || step;
+        if (step.exit.to === targetLevel) return first;
+        seen.add(step.exit.to); queue.push({ level: step.exit.to, first });
+      }
+    }
+    return null;
+  }
   function canUseDoor() { const door = currentDoor(); return !!door && !state.paused && !state.failed && !state.won && !state.conversation && state.energy > 0 && state.stairsCooldown <= 0 && Math.hypot(state.player.x - door.x, state.player.y - door.y) <= door.radius; }
   function canCallDog() { return state.energy > 0 && wingSimulation.canInteract(state); }
-  function interact() { if (state.conversation) { excuseConversation(); return; } if (canCallDog() && wingSimulation.interact(state)) { begin(); handleWingEvents(); updateEnergyUI(); return; } const snack = nearest(); if (snack) collect(snack); else if (canUseDoor()) useDoor(); else if (canUseStairs()) useStairs(); else if (canFinishRun()) finishRun(); }
+  function canPlayToy() { return state.energy > 0 && !state.conversation && wingSimulation.canPlay(state); }
+  function stairsAction() { return world.floors[state.level].stair?.direction === 'up' ? 'Go upstairs' : 'Downstairs to Waffles’s clubhouse'; }
+  function interact() { if (state.conversation) { excuseConversation(); return; } if (canCallDog() && wingSimulation.interact(state)) { begin(); handleWingEvents(); updateEnergyUI(); return; } if (canPlayToy() && wingSimulation.play(state)) { begin(); handleWingEvents(); updateEnergyUI(); return; } const snack = nearest(); if (snack) collect(snack); else if (canUseDoor()) useDoor(); else if (canUseStairs()) useStairs(); else if (canFinishRun()) finishRun(); }
   function renderFloorMap() {
-    $('mini-map').innerHTML = world.rooms.map(room => `<i data-room="${room.id}" class="${state.level === 0 && room.id === world.home.room ? 'home' : ''}"></i>`).join('') + '<b id="map-player"></b>';
+    $('mini-map').innerHTML = world.rooms.map(room => `<i data-room="${room.id}" class="${state.level === world.home.level && room.id === world.home.room ? 'home' : ''}"></i>`).join('') + '<b id="map-player"></b>';
     domNodes.delete('map-player'); mapTiles = Array.from(document.querySelectorAll('.mini-map [data-room]')); mapTileState.clear(); mapStatus = '';
     setText('map-floor-caption', world.floors[state.level].name.toUpperCase());
-    $('mini-map').classList.toggle('wing-map', state.level === world.wing.level);
-    if (state.level === world.wing.level) mapTiles.forEach(tile => { const room = world.rooms.find(item => item.id === tile.dataset.room); if (room) tile.style.cssText = `left:${room.x / world.width * 100}%;top:${room.y / world.height * 100}%;width:${room.w / world.width * 100}%;height:${room.h / world.height * 100}%`; });
+    $('mini-map').classList.toggle('wing-map', world.floors[state.level].kind !== 'mansion');
+    if (world.floors[state.level].kind !== 'mansion') mapTiles.forEach(tile => { const room = world.rooms.find(item => item.id === tile.dataset.room); if (room) tile.style.cssText = `left:${room.x / world.width * 100}%;top:${room.y / world.height * 100}%;width:${room.w / world.width * 100}%;height:${room.h / world.height * 100}%`; });
   }
   function changeFloor(level, arrival) {
     stopChatter();
     world.activateFloor(level); state.level = level; state.player.level = level;
     state.player.x = arrival.x; state.player.y = arrival.y; state.player.moving = false;
+    wingSimulation.changeFloor?.(level, arrival, state);
+    stealthSimulation.changeFloor(level, arrival, state);
     path = []; autoCollect = null; keys.clear(); state.leftHome = true; state.conversation = null;
     guestBrain.reset(); setText('conversation-status', '');
     state.talkCooldown = Math.max(state.talkCooldown, 4); state.stairsCooldown = .75;
-    state.nearHome = world.isHome(state.player.x, state.player.y); state.nearbySnack = null; state.nearDoor = false;
+    state.nearHome = world.isHome(state.player.x, state.player.y); state.nearbySnack = null; state.nearDoor = false; state.nearDog = false; state.nearToy = false;
     state.activeRoom = world.getRoom(state.player.x, state.player.y)?.id || null;
     if (state.activeRoom) state.visited.add(state.activeRoom);
     rebuildNavigation(); renderer.setFloor(state.player); renderFloorMap();
@@ -190,33 +244,43 @@
     if (!canUseStairs()) return false;
     const stair = world.floors[state.level].stair;
     begin(); changeFloor(stair.to, stair.arrival);
-    toast(state.level === 1 ? 'They’ve spotted you.' : 'Back downstairs.', state.level === 1 ? 'Dodge the guests to get the food. Caught in a story? Mash E to escape.' : 'Your couch & TV are in the Snack Lounge. Bring that haul home.', state.level === 1 ? '!' : '⌂');
+    toast(state.level === 1 ? 'They’ve spotted you.' : 'Back in Waffles’s clubhouse.', state.level === 1 ? 'Dodge the guests for more snacks. The Midnight Wing doorway leads to your final couch.' : 'Explore the wing, or take these stairs back toward the Midnight Wing.', state.level === 1 ? '!' : '🐾');
+    if (travelIntent === 'stairs') travelIntent = null;
+    continueTravel();
     return true;
   }
   function useDoor() {
     if (!canUseDoor()) return false;
     const door = currentDoor(); begin(); changeFloor(door.to, door.arrival);
-    toast(state.level === world.wing.level ? 'Welcome to Snack & Paws.' : 'Back in the mansion.', state.level === world.wing.level ? 'Nico is nibbling the munchies. Waffles needs you to show him his dinner bowl.' : 'Your couch & TV are in the Snack Lounge. R walks you home.', state.level === world.wing.level ? '🐾' : '⌂', 6500);
+    const arrivingMidnight = state.level === world.midnight.level;
+    toast(arrivingMidnight ? 'Welcome to the Midnight Wing.' : state.level === world.wing.level ? 'Welcome to Snack & Paws.' : `Back to ${world.floors[state.level].name.toLowerCase()}.`, arrivingMidnight ? 'R follows the hallway straight to your couch. Laundry, wardrobe, attic and terrace are optional detours.' : state.level === world.wing.level ? 'The stairs are in Waffles’s clubhouse. Helping him with dinner is optional.' : 'R points you toward the final couch. Press E at each doorway or staircase.', arrivingMidnight ? '☾' : state.level === world.wing.level ? '🐾' : '⌂', 6500);
+    continueTravel();
     return true;
   }
   function headForWing() {
     if (state.paused || state.won || state.failed || state.conversation) return;
+    travelIntent = null;
     const door = currentDoor();
-    if (!door) { headForStairs(); toast('The wing is on the ground floor.', 'Go downstairs first, then G takes you to the wing doorway.', '🐾'); return; }
-    navigate(door.x, door.y); toast(state.level === world.wing.level ? 'Back to the main mansion?' : 'There’s a pup in the new wing.', 'Walk to the doorway, then press E to go through.', '↪');
+    if (!door) return;
+    navigate(door.x, door.y); toast(`This way to ${door.label}.`, 'Walk to the doorway, then press E to go through.', '↪');
   }
   function headForStairs() {
     if (state.paused || state.won || state.failed || state.conversation) return;
-    const stair = world.floors[state.level].stair; if (!stair) { headForWing(); return; } navigate(stair.x, stair.y);
-    toast(state.level === 0 ? 'Going up?' : 'Time to head down?', 'Walk to the staircase, then press E to change floors.', '↟');
+    travelIntent = 'stairs';
+    const stair = world.floors[state.level].stair;
+    if (!stair) { const door = currentDoor(); if (door) navigate(door.x, door.y); toast(state.level === world.midnight.level ? 'Back to the upstairs staircase.' : 'The stairs are in Waffles’s clubhouse.', 'Press E at the doorway. You’ll continue toward the stairs; press E there to change floors.', '↟', 6500); return; }
+    navigate(stair.x, stair.y);
+    toast(stair.direction === 'up' ? 'Going up?' : 'Time to head down?', 'Walk to the stair landing, then press E to change floors.', stair.direction === 'up' ? '↟' : '↡');
   }
+  function continueTravel() { if (travelIntent === 'home') headHome(); else if (travelIntent === 'stairs') headForStairs(); }
   function headHome() {
     if (state.paused || state.won || state.failed || state.conversation) return;
-    if (state.level === 1) { headForStairs(); toast('Your couch is downstairs.', 'Head for the stairs and press E. Then R takes you back to the lounge.', '⌂'); return; }
-    if (state.level === world.wing.level) { headForWing(); toast('Your couch is in the main mansion.', 'Use the doorway with E, then R takes you to the Snack Lounge.', '⌂'); return; }
-    if (!state.leftHome) { toast('Your couch will be here.', 'Explore the mansion, collect some munchies, then come back to bank your haul.', '⌂'); return; }
+    travelIntent = 'home';
+    const next = nextExitToward(world.home.level);
+    if (next) { navigate(next.exit.x, next.exit.y); toast(`To the couch via ${world.floors[next.exit.to].name}.`, `Press E at the ${next.kind === 'stairs' ? 'stairs' : 'doorway'}. Your route continues on the other side.`, '⌂'); return; }
+    if (state.level !== world.home.level) return;
     navigate(world.home.x, world.home.y);
-    toast('Home is where the snacks end up.', 'Head for the couch & TV, then press E to finish your run.', '⌂');
+    toast('Your couch is off the Midnight hallway.', 'The side rooms are optional. Press E beside the couch & TV to bank your uneaten snacks.', '⌂');
   }
   function nearest() { const snack = world.nearestSnack(state.player.x, state.player.y, unavailableSnacks, world.collectionRadius); return snack && state.discovered.has(snack.id) ? snack : null; }
   function announceEating(eaten) {
@@ -280,6 +344,7 @@
     discoverSnacks();
     if (!state.discovered.has(snack.id)) return;
     begin(); state.found.add(snack.id); chime();
+    stealthSimulation.makeNoise('rummage', state); handleStealthEvents();
     state.bag.push(snack);
     state.haulCounts[snack.kind] = (state.haulCounts[snack.kind] || 0) + 1;
     const eaten = autoEat(false);
@@ -399,6 +464,7 @@
       checkConversation();
     }
     if (dx || dy) p.facing = dx - dy >= 0 ? 1 : -1;
+    if (!state.conversation && distanceMoved < Math.hypot(dx, dy) * .65) stealthSimulation.makeNoise('bump', state);
     return distanceMoved;
   }
 
@@ -423,10 +489,14 @@
     for (const event of wingSimulation.drainEvents()) {
       if (event.type === 'whine') whine();
       if (event.type === 'munch') munching.play();
-      if (event.type === 'following') toast('Come on, Waffles!', 'He’s following. Walk him to the food bowl in the pet kitchen.', '🐾', 4500);
+      if (event.type === 'following' || event.type === 'coaxed') toast('Come on, Waffles!', state.wing.taskCompleted ? 'He’s following you to the couch.' : 'He’s following again. Lead him to the far kitchen bowl.', '🐾', 4500);
+      if (event.type === 'distracted') toast('Waffles found something fascinating.', 'Go back and press E nearby to coax him along.', '🐾', 4500);
+      if (event.type === 'waiting') toast('Tiny legs. Big mansion.', 'Come back and press E nearby. Waffles needs a little encouragement.', '🐾', 4500);
+      if (event.type === 'companion') toast('Your movie-night buddy.', 'Waffles will follow you through the mansion to the final couch.', '♥', 5000);
+      if (event.type === 'play') { chime(); toast('A very squeaky snack break.', `+${Math.round(event.energy)} energy for Waffles. Now on to his dinner bowl.`, '🐾', 4500); }
       if (event.type === 'wake') toast('Good morning, sleepy pup.', 'A gentle wake-up. Now show Waffles where his dinner is.', '🐾', 4500);
       if (event.type === 'sleep') toast('Waffles curled up for a nap.', 'Press E nearby to gently wake him and finish the trip to his bowl.', '☾', 5000);
-      if (event.type === 'fed') { chime(true); toast('One very happy corgi.', 'Dinner delivered. Waffles is full of energy—and wiggles.', '♥', 6500); updateEnergyUI(); }
+      if (event.type === 'fed') { chime(true); toast('One very happy corgi.', 'Dinner delivered. Waffles will follow you to the couch.', '♥', 6500); updateEnergyUI(); }
       if (event.type === 'snackEaten') {
         state.discovered.delete(event.snackId);
         if (state.hintTarget === event.snackId) state.hintTarget = null;
@@ -435,19 +505,47 @@
     }
   }
   function monologueLines(guest) { return guest.monologue?.length ? guest.monologue : [guest.line]; }
-  function advanceMonologue(conversation, seconds) {
+  function startResidentLecture(event) {
+    if (state.conversation || state.paused || state.won || state.failed || state.level !== world.midnight.level || world.getRoom(state.player.x, state.player.y, state.level)?.id === world.home.room) return false;
+    const resident = state.stealth.resident, lines = event.lines?.length ? event.lines : resident.lines;
+    state.conversation = { kind: 'resident', unskippable: true, guestId: resident.id, voiceId: event.voiceId || resident.voiceId || 'houseGuest', name: event.name || resident.name, lines, line: lines[0], lineIndex: 0, lineElapsed: 0, remaining: 6, duration: 6, escapePresses: 0, escapeRequired: 0, excuseCost: 0 };
+    state.player.moving = false; state.sprinting = false; path = []; autoCollect = null; travelIntent = null; keys.clear();
+    clearTimeout(toastTimeout); $('toast').classList.add('fade');
+    setText('conversation-status', `${state.conversation.name}: ${state.conversation.line} Listen for six seconds. This lecture cannot be skipped.`);
+    syncMusic(); speakConversation(); updateEnergyUI(); renderDirty = true;
+    return true;
+  }
+  function handleStealthEvents() {
+    for (const event of stealthSimulation.drainEvents()) {
+      if (event.type === 'warning') toast('Who’s still up?', 'You’re getting loud. Walk softly and let the house settle.', '☾', 3800);
+      if (event.type === 'alarm') toast('You woke someone up.', 'They’re checking the last noise. Slip out of sight—or reach the safe TV snug.', '!', 4800);
+      if (event.type === 'caught') startResidentLecture(event);
+    }
+  }
+  function nextMonologueLine(conversation, advances = 1) {
+    if (conversation.unskippable) {
+      conversation.lineIndex = Math.min(conversation.lines.length - 1, conversation.lineIndex + advances);
+      conversation.line = conversation.lines[conversation.lineIndex];
+      setText('conversation-status', `${conversation.name}: ${conversation.line} ${Math.ceil(conversation.remaining)} seconds left. Listen until the lecture ends.`);
+      speakConversation();
+      return;
+    }
     const guest = state.guests.find(person => person.id === conversation.guestId);
     if (!guest) return;
-    conversation.lineElapsed += seconds;
-    const advances = Math.floor((conversation.lineElapsed + .000001) / rules.conversationLineDuration);
-    if (!advances) return;
-    conversation.lineElapsed = Math.max(0, conversation.lineElapsed - advances * rules.conversationLineDuration);
     const lines = monologueLines(guest);
     conversation.lineIndex = (guest.monologueCursor + advances - 1) % lines.length;
     conversation.line = lines[conversation.lineIndex];
     guest.monologueCursor = (guest.monologueCursor + advances) % lines.length;
-    setText('conversation-status', `${guest.name}: ${conversation.line} Mash E or Space to escape.`);
+    setText('conversation-status', `${guest.name}: ${conversation.line} E or Space: next line and escape. ${conversation.escapePresses} of ${conversation.escapeRequired} taps.`);
     speakConversation();
+  }
+  function advanceMonologue(conversation, seconds) {
+    conversation.lineElapsed += seconds;
+    const duration = conversation.unskippable ? 2 : rules.conversationLineDuration;
+    const advances = Math.floor((conversation.lineElapsed + .000001) / duration);
+    if (!advances) return;
+    conversation.lineElapsed = Math.max(0, conversation.lineElapsed - advances * duration);
+    nextMonologueLine(conversation, advances);
   }
   function checkConversation() {
     if (state.level !== 1 || !state.started || state.paused || state.won || state.failed || state.conversation || state.talkCooldown > 0 || state.energy <= 0) return false;
@@ -476,21 +574,24 @@
     return true;
   }
   function endConversation(excused = false) {
+    const residentLecture = !!state.conversation?.unskippable;
     stopChatter();
     state.conversation = null; state.talkCooldown = rules.conversationCooldown;
+    if (residentLecture) { stealthSimulation.endLecture(state); keys.clear(); }
     syncMusic();
     setText('conversation-status', excused ? 'You excused yourself. Keep moving.' : 'The conversation is over. You can move again.');
     renderDirty = true;
   }
   function excuseConversation() {
-    if (!state.conversation || state.paused || state.failed || state.won) return false;
+    if (!state.conversation || state.conversation.unskippable || state.paused || state.failed || state.won) return false;
     const conversation = state.conversation;
     conversation.escapePresses = Math.min(conversation.escapeRequired, conversation.escapePresses + 1);
-    if (sound && !document.hidden) chatter.mash(conversation.escapePresses / conversation.escapeRequired);
     conversation.lastPressAt = performance.now();
     renderDirty = true;
     if (conversation.escapePresses < conversation.escapeRequired) {
-      if (conversation.escapePresses === 1 || conversation.escapePresses === Math.ceil(conversation.escapeRequired / 2)) setText('conversation-status', `Keep mashing E. ${conversation.escapePresses} of ${conversation.escapeRequired} taps to escape.`);
+      conversation.lineElapsed = 0;
+      nextMonologueLine(conversation);
+      if (sound && !document.hidden) chatter.mash(conversation.escapePresses / conversation.escapeRequired);
       return true;
     }
     const excuseCost = state.conversation.excuseCost, eatenBefore = state.consumedCount;
@@ -502,6 +603,15 @@
     return true;
   }
 
+  function hitTransition(transition, click, doorway = false) {
+    const anchor = transition.anchor || transition;
+    const targets = [{ ...transition, z: .2 }, { ...anchor, z: .2 }];
+    if (doorway) targets.push({ ...anchor, z: 1 });
+    return targets.some(target => {
+      const point = renderer.worldToScreen(target.x, target.y, target.z);
+      return Math.hypot(point.x - click.x, point.y - click.y) < 35;
+    });
+  }
   canvas.addEventListener('pointerdown', event => {
     if (state.paused || state.won || state.failed || state.conversation) return;
     canvas.focus({ preventScroll: true });
@@ -512,15 +622,15 @@
       const p = renderer.worldToScreen(snack.x, snack.y, 1.04), d = Math.hypot(p.x - click.x, p.y - click.y);
       if (d < distance) { distance = d; clicked = snack; }
     }
-    if (clicked) { navigate(clicked.x, clicked.y, clicked); return; }
+    if (clicked) { travelIntent = null; navigate(clicked.x, clicked.y, clicked); return; }
     const couch = renderer.worldToScreen(world.home.x, world.home.y, .03);
-    if (state.level === 0 && Math.hypot(couch.x - click.x, couch.y - click.y) < 30) { headHome(); return; }
+    if (state.level === world.home.level && Math.hypot(couch.x - click.x, couch.y - click.y) < 30) { headHome(); return; }
     const stair = world.floors[state.level].stair;
-    if (stair) { const stairScreen = renderer.worldToScreen(stair.x, stair.y, .2); if (Math.hypot(stairScreen.x - click.x, stairScreen.y - click.y) < 35) { headForStairs(); return; } }
+    if (stair && hitTransition(stair, click)) { headForStairs(); return; }
     const door = currentDoor();
-    if (door) { const point = renderer.worldToScreen(door.x, door.y, .2); if (Math.hypot(point.x - click.x, point.y - click.y) < 35) { headForWing(); return; } }
+    if (door && hitTransition(door, click, true)) { headForWing(); return; }
     const point = renderer.screenToWorld(event.clientX, event.clientY);
-    if (point.x >= .8 && point.x <= 29.2 && point.y >= .8 && point.y <= 21.2) navigate(point.x, point.y);
+    if (point.x >= .8 && point.x <= 29.2 && point.y >= .8 && point.y <= 21.2) { travelIntent = null; navigate(point.x, point.y); }
     else toast('The snacks are inside.', 'Click a room to walk there, or use WASD.');
   });
   window.addEventListener('keydown', event => {
@@ -536,7 +646,7 @@
     }
     if (state.failed || state.won) { if (key === 'p') openPause(); return; }
     if (key === 'shift') keys.add('shift');
-    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) { keys.add(key); path = []; autoCollect = null; begin(); }
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) { keys.add(key); path = []; autoCollect = null; travelIntent = null; begin(); }
     if (!event.repeat && (key === 'e' || key === ' ')) interact();
     if (!event.repeat && key === 'p') openPause();
     if (!event.repeat && key === 'm') openMap();
@@ -579,7 +689,7 @@
   function openPause() {
     if (state.failed) return;
     if (state.won) { if (state.ending?.active) toggleEndingPause(); else showBankedResult(state.ending?.isBest || false); return; }
-    openDialog(`<span class="dialog-icon">☾</span><span class="dialog-eyebrow">A LITTLE BREATHER</span><h2 id="dialog-title" class="dialog-title">Snack break?</h2><p class="dialog-copy">Energy drain is paused. Keep searching for a bigger haul, or head back to your lounge to bank this run.</p><div class="win-stats"><div><strong>${state.bag.length}</strong><small>UNBANKED MUNCHIES</small></div><div><strong>${timeLabel(state.elapsed)}</strong><small>RUN TIME</small></div></div><p class="dialog-copy">Best banked haul: ${best ? String(best) : 'your first feast awaits'}</p><button class="primary-button" data-action="resume">Back to the mansion →</button><button class="secondary-button" data-action="help">Controls & how to play</button><button class="secondary-button" data-action="sound">Turn sound ${sound ? 'off' : 'on'}</button><button class="secondary-button" data-action="restart">Start a fresh run</button>`);
+    openDialog(`<span class="dialog-icon">☾</span><span class="dialog-eyebrow">A LITTLE BREATHER</span><h2 id="dialog-title" class="dialog-title">Snack break?</h2><p class="dialog-copy">Energy drain is paused. Keep searching for a bigger haul, or head to the Midnight Wing’s TV snug to bank this run.</p><div class="win-stats"><div><strong>${state.bag.length}</strong><small>UNBANKED MUNCHIES</small></div><div><strong>${timeLabel(state.elapsed)}</strong><small>RUN TIME</small></div></div><p class="dialog-copy">Best banked haul: ${best ? String(best) : 'your first feast awaits'}</p><button class="primary-button" data-action="resume">Back to the mansion →</button><button class="secondary-button" data-action="help">Controls & how to play</button><button class="secondary-button" data-action="sound">Turn sound ${sound ? 'off' : 'on'}</button><button class="secondary-button" data-action="restart">Start a fresh run</button>`);
   }
   function stopTV(reset = false) {
     tvVideo.pause();
@@ -617,18 +727,18 @@
     Object.assign(ending, { elapsed: ending.duration, active: false, seated: true, tvOn: true, paused: false });
     renderer.setTVVideo(tvVideo); stopTV();
     setText('skip-ending', 'View haul'); setText('ending-pause', 'Pause'); $('ending-restart').hidden = false;
-    setAttribute(canvas, 'aria-label', 'Haul banked. You are sitting on the lounge couch, eating munchies and watching Munchie TV. Press P to pause, or use View haul and Another run.');
+    setAttribute(canvas, 'aria-label', 'Haul banked. You are sitting on the TV snug couch, eating munchies and watching Munchie TV. Press P to pause, or use View haul and Another run.');
     updateEndingCaption(); renderDirty = true;
     showBankedResult(ending.isBest);
     return true;
   }
   function openHelp() {
-    openDialog(`<span class="dialog-icon">✦</span><span class="dialog-eyebrow">WELCOME TO HIGH AND SEEK</span><h2 id="dialog-title" class="dialog-title">One more munchie?</h2><p class="dialog-copy">Grab as many munchies as you dare, then return to the ground-floor Snack Lounge. Stand beside the couch & TV and press E to bank your haul. Room supplies are a mystery.</p><p class="dialog-copy">G walks to the ground-floor Snack &amp; Paws wing doorway; E goes through. Nico starts snacking after you first enter his den. Listen for his crunches and look for the Mmm thought bubble; he eats real munchies before you can grab them. Call Waffles the corgi with E, then guide him to his bowl in the pet kitchen. His meter drains until dinner; at zero he naps. E gently wakes him. Feeding him is an optional task and does not spend your haul.</p><p class="dialog-copy">Collected snacks stay in your bag. You automatically eat one only when its entire 16–29 energy refill fits, so nothing is wasted. If several fit, the biggest refill goes first. Eaten snacks leave your bag; only the uneaten munchies you bring back count toward your haul. Upstairs guests spot you and chase you around the furniture. Keep your distance to grab the food. Everyone has their own very long story, and they pick up where you interrupted them next time. Get caught and they can talk for 16 seconds while energy drains. Mash E or Space 12 times to escape early for 4 energy. Holding a key does not count. You get six seconds to get away after a chat.</p><div class="dialog-controls"><div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move · arrow keys work too</span></div><div><kbd>E</kbd> or <kbd>Space</kbd><span>Grab / use stairs / mash to escape / bank haul</span></div><div><kbd>T</kbd><span>Walk to stairs · press E there</span></div><div><kbd>G</kbd><span>Wing doorway · press E there</span></div><div><kbd>R</kbd><span>Walk home · downstairs first</span></div><div><kbd>Click</kbd><span>Walk to a spot or collect a snack</span></div><div><kbd>Scroll</kbd> or <kbd>+</kbd><kbd>−</kbd><span>Zoom the camera</span></div><div><kbd>V</kbd><span>Whole floor / follow camera</span></div><div><kbd>Shift</kbd><span>Sprint · burns more energy</span></div><div><kbd>H</kbd><span>Use one of two hints</span></div><div><kbd>M</kbd><span>Map · HOME marks your lounge</span></div><div><kbd>P</kbd><span>Pause and take a breather</span></div></div><p class="dialog-copy">On your phone? Tap to walk. The action button changes between GRAB, DOOR, STAIRS, CALL, WAKE, MASH and CHILL. Save energy for the trip home; running out loses your unbanked haul. Your best banked haul saves on this device.</p><button class="primary-button" data-action="resume">Let’s get snackin’ →</button>`);
+    openDialog(`<span class="dialog-icon">✦</span><span class="dialog-eyebrow">WELCOME TO HIGH AND SEEK</span><h2 id="dialog-title" class="dialog-title">One more munchie?</h2><p class="dialog-copy">Start downstairs and gather munchies on your way through Snack &amp; Paws and upstairs to the Midnight Wing. Its laundry, wardrobe, attic and moonlit terrace are optional snack detours. Follow the central hallway to the private TV snug doorway. Stand beside the couch & TV and press E to bank your haul. Room supplies are a mystery.</p><p class="dialog-copy">G walks to the ground-floor Snack &amp; Paws wing doorway; E goes through. Nico starts snacking after you first enter his den. Listen for his crunches and look for the Mmm thought bubble; he eats real munchies before you can grab them. Call Waffles the corgi with E, then guide him to his bowl in the far corner of the pet kitchen. He gets distracted: come back and press E nearby to coax him onward. A one-use squeaky break gives him up to 25 energy. His meter drains until dinner; at zero he naps and E gently wakes him. Once fed, he follows you to the TV snug and curls up beside you. Helping him is optional and does not spend your haul.</p><p class="dialog-copy">Collected snacks stay in your bag. You automatically eat one only when its entire 16–29 energy refill fits, so nothing is wasted. If several fit, the biggest refill goes first. Eaten snacks leave your bag; only the uneaten munchies you bring back count toward your haul. Upstairs guests spot you and chase you around the furniture. Keep your distance to grab the food. Everyone has their own very long story, and they pick up where you interrupted them next time. Get caught and they can talk for 16 seconds while energy drains. Each E or Space tap advances the dialogue immediately and counts toward escaping. Twelve taps free you for 4 energy. Holding a key does not count. You get six seconds to get away after a chat.</p><p class="dialog-copy">Don't wake the house in the Midnight Wing. Sprinting, bumping furniture, rummaging for snacks, creaky attic boards and loose terrace bottles build noise. Walking quietly lets it settle; spinning washers, soft wardrobe rugs and terrace wind help. At high noise, Mara wakes up and investigates the last sound. Break her sightline and slip away. If she catches you, you must listen for six seconds: E and Space cannot skip her lecture, and time and energy keep draining. You then get a chance to escape. The entire TV snug is safe, and fed Waffles stays quiet.</p><div class="dialog-controls"><div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move · arrow keys work too</span></div><div><kbd>E</kbd> or <kbd>Space</kbd><span>Grab / use stairs / mash to escape / bank haul</span></div><div><kbd>T</kbd><span>Walk to stairs · press E there</span></div><div><kbd>G</kbd><span>Wing doorway · press E there</span></div><div><kbd>R</kbd><span>Head to couch · E at each connection</span></div><div><kbd>Click</kbd><span>Walk to a spot or collect a snack</span></div><div><kbd>Scroll</kbd> or <kbd>+</kbd><kbd>−</kbd><span>Zoom the camera</span></div><div><kbd>V</kbd><span>Whole floor / follow camera</span></div><div><kbd>Shift</kbd><span>Sprint · burns more energy</span></div><div><kbd>H</kbd><span>Use one of two hints</span></div><div><kbd>M</kbd><span>Map · HOME marks the final TV snug</span></div><div><kbd>P</kbd><span>Pause and take a breather</span></div></div><p class="dialog-copy">On your phone? Tap to walk. The action button changes between GRAB, DOOR, STAIRS, CALL, WAKE, PLAY, MASH and CHILL. Save energy for the trip home; running out loses your unbanked haul. Your best banked haul saves on this device.</p><button class="primary-button" data-action="resume">Let’s get snackin’ →</button>`);
   }
   function openMap() {
-    const roomIcons = { library: '📚', kitchen: '🍳', arcade: '🎮', lounge: '🛋️', foyer: '🏛️', conservatory: '🌿', cinema: '🎬', pantry: '🍪', party: '🎉', suite: '🛏️', upperLanding: '↟', studio: '🎨', snackerDen: '😋', corgiPlayroom: '🐾', petKitchen: '🥣' };
+    const roomIcons = { library: '📚', kitchen: '🍳', arcade: '🎮', lounge: '🛋️', foyer: '🏛️', conservatory: '🌿', cinema: '🎬', pantry: '🍪', party: '🎉', suite: '🛏️', upperLanding: '↟', studio: '🎨', snackerDen: '😋', corgiPlayroom: '🐾', petKitchen: '🥣', laundry: '🧺', wardrobe: '👕', attic: '📦', terrace: '☾', snug: '🛋️' };
     const floorMaps = world.floors.map(floor => `<h3 class="map-floor-title">${floor.name}${floor.id === state.level ? ' · YOU ARE HERE' : ''}</h3><div class="map-grid">${floor.rooms.map(room => `<div class="map-room ${state.activeRoom === room.id ? 'active' : ''} ${room.id === world.home.room ? 'home-room' : ''}"><span>${roomIcons[room.id] || '✦'}</span><strong>${room.shortName}</strong><small>${room.id === world.home.room ? '⌂ HOME · couch & TV' : state.visited.has(room.id) ? 'explored' : 'unexplored'}</small></div>`).join('')}</div>`).join('');
-    openDialog(`<span class="dialog-eyebrow">YOUR RIDICULOUSLY LARGE HOME</span><h2 id="dialog-title" class="dialog-title">The lay of the land.</h2><p class="dialog-copy">Your lounge is marked HOME. Bring your haul back to its couch & TV to finish. The central staircase connects both floors: T walks there, E changes floor. G walks to the ground-floor wing doorway; press E to enter or return. The map shows exploration, never food supplies.</p>${floorMaps}<button class="primary-button" data-action="resume">Back to exploring →</button>`);
+    openDialog(`<span class="dialog-eyebrow">YOUR RIDICULOUSLY LARGE HOME</span><h2 id="dialog-title" class="dialog-title">The lay of the land.</h2><p class="dialog-copy">The final TV snug is marked HOME. From downstairs, enter Snack &amp; Paws and take the stairs in Waffles’s clubhouse to the upstairs rooms. The upstairs doorway leads to the Midnight Wing. Follow its hallway to the couch, with laundry, wardrobe, attic and terrace detours if you want more snacks. R guides you toward the couch; press E at each doorway or staircase. The map shows exploration, never food supplies.</p>${floorMaps}<button class="primary-button" data-action="resume">Back to exploring →</button>`);
   }
   function hint() {
     if (!state.hints || state.won || state.failed || state.paused || state.conversation) return;
@@ -648,21 +758,25 @@
     state.energy = 0; state.failed = true; state.sprinting = false; state.player.moving = false;
     syncMusic();
     state.conversation = null; setText('conversation-status', '');
-    path = []; autoCollect = null; keys.clear(); state.nearbySnack = null; state.destination = null;
+    path = []; autoCollect = null; travelIntent = null; keys.clear(); state.nearbySnack = null; state.destination = null;
     updateEnergyUI();
-    openDialog(`<span class="dialog-icon">ϟ</span><span class="dialog-eyebrow">THE MUNCHIES WON THIS ROUND</span><h2 id="dialog-title" class="dialog-title">So close to the couch.</h2><p class="dialog-copy">Your energy hit zero before you banked your haul. Your bag had ${state.bag.length} uneaten munchie${state.bag.length === 1 ? '' : 's'} left. None were banked. Next time, save some energy for the return trip.</p><div class="win-stats"><div><strong>${state.bag.length}</strong><small>UNBANKED MUNCHIES</small></div><div><strong>${timeLabel(state.elapsed)}</strong><small>RUN TIME</small></div><div><strong>0%</strong><small>ENERGY LEFT</small></div></div><p class="dialog-copy">Your best banked haul stays safe. A fresh run restores full energy and shuffles the mansion’s munchies.</p><button class="primary-button" data-action="restart">Refuel & try again ↻</button>`);
+    openDialog(`<span class="dialog-icon">ϟ</span><span class="dialog-eyebrow">THE MUNCHIES WON THIS ROUND</span><h2 id="dialog-title" class="dialog-title">So close to the couch.</h2><p class="dialog-copy">Your energy hit zero before you banked your haul. Your bag had ${state.bag.length} uneaten munchie${state.bag.length === 1 ? '' : 's'} left. None were banked. Next time, save some energy for the final stretch to the couch.</p>${resultStats()}<p class="dialog-copy">Your best banked haul stays safe. A fresh run restores full energy and shuffles the mansion’s munchies.</p><button class="primary-button" data-action="restart">Refuel & try again ↻</button>`);
     $('dialog-close').hidden = true;
     $('dialog-content').querySelector('[data-action="restart"]').focus();
   }
+  function resultStats() {
+    const carried = state.won ? state.bankedCount : 0;
+    return `<div class="win-stats result-stats" role="group" aria-label="Run results"><div><strong>${state.found.size}</strong><small>TOTAL COLLECTED</small></div><div><strong>${carried}</strong><small>CARRIED TO COUCH</small></div><div><strong>${carried}</strong><small>SCORE</small></div><div><strong>${timeLabel(state.elapsed)}</strong><small>RUN TIME</small></div></div>`;
+  }
   function showBankedResult(isBest) {
     stopTV();
-    openDialog(`<span class="dialog-icon">🛋️</span><span class="dialog-eyebrow">${isBest ? 'A NEW PERSONAL BEST HAUL' : 'BACK TO THE GOOD LIFE'}</span><h2 id="dialog-title" class="dialog-title">Haul secured.</h2><p class="dialog-copy">Back on the couch. TV on. You brought home ${state.bankedCount} uneaten munchie${state.bankedCount === 1 ? '' : 's'}, and every one counts.</p><div class="win-stats"><div><strong>${state.bankedCount}</strong><small>MUNCHIES BANKED</small></div><div><strong>${timeLabel(state.elapsed)}</strong><small>YOUR RUN</small></div><div><strong>${Math.ceil(state.energy)}%</strong><small>ENERGY LEFT</small></div></div><p class="dialog-copy">Best banked haul: ${best}. Fancy risking one more room next time?</p><button class="primary-button" data-action="restart">Another munchie run? ↻</button><button class="secondary-button" data-action="resume">Enjoy the couch & TV</button>`);
+    openDialog(`<span class="dialog-icon">🛋️</span><span class="dialog-eyebrow">${isBest ? 'A NEW PERSONAL BEST HAUL' : 'BACK TO THE GOOD LIFE'}</span><h2 id="dialog-title" class="dialog-title">Haul secured.</h2><p class="dialog-copy">Back on the couch. TV on. You brought home ${state.bankedCount} uneaten munchie${state.bankedCount === 1 ? '' : 's'}, and every one counts.</p>${resultStats()}<p class="dialog-copy">Best score: ${best}. One point for every munchie carried to the couch. Fancy risking one more room next time?</p><button class="primary-button" data-action="restart">Another munchie run? ↻</button><button class="secondary-button" data-action="resume">Enjoy the couch & TV</button>`);
   }
   function finishRun() {
     if (!canFinishRun()) return false;
     stopChatter();
     state.bankedCount = state.bag.length;
-    state.won = true; state.paused = true; state.player.moving = false; state.sprinting = false; state.conversation = null; state.nearbySnack = null; state.destination = null; path = []; autoCollect = null; keys.clear();
+    state.won = true; state.paused = true; state.player.moving = false; state.sprinting = false; state.conversation = null; state.nearbySnack = null; state.destination = null; path = []; autoCollect = null; travelIntent = null; keys.clear();
     const isBest = state.bankedCount > best || state.bankedCount === best && state.elapsed < bestRunTime;
     if (isBest) { best = state.bankedCount; bestRunTime = state.elapsed; try { localStorage.setItem('high-and-seek-best-haul-v2', JSON.stringify({ score: best, elapsed: bestRunTime })); } catch { /* Optional device record. */ } $('best-time').textContent = String(best); }
     updateHaul();
@@ -685,9 +799,10 @@
     setAttribute(canvas, 'aria-label', gameWorldLabel);
     if (dialog.open) dialog.close();
     world.activateFloor(0); world.shuffleSnacks();
-    wingSimulation.reset(); state.wing = wingSimulation.getState(); state.nearDoor = false; state.nearDog = false;
-    Object.assign(state, { level: 0, player: { ...world.start, level: 0, facing: 1, moving: false }, guests: createGuests(), conversation: null, ending: null, talkCooldown: 0, stairsCooldown: 0, nearStairs: false, found: new Set(), bag: [], consumedCount: 0, bankedCount: 0, discovered: new Set(), haulCounts: {}, leftHome: false, nearHome: true, homeAvailable: false, hintTarget: null, activeRoom: world.home.room, paused: false, started: false, elapsed: 0, hints: rules.hints, visited: new Set([world.home.room]), won: false, failed: false, energy: rules.startEnergy, sprinting: false, warnedLow: false, refillFlash: 0, refillAmount: 0 });
-    path = []; autoCollect = null; keys.clear(); guestBrain.reset();
+    wingSimulation.reset(); state.wing = wingSimulation.getState(); state.nearDoor = false; state.nearDog = false; state.nearToy = false;
+    stealthSimulation.reset(); state.stealth = stealthSimulation.getState();
+    Object.assign(state, { level: 0, player: { ...world.start, level: 0, facing: 1, moving: false }, guests: createGuests(), conversation: null, ending: null, talkCooldown: 0, stairsCooldown: 0, nearStairs: false, found: new Set(), bag: [], consumedCount: 0, bankedCount: 0, discovered: new Set(), haulCounts: {}, leftHome: false, nearHome: false, homeAvailable: false, hintTarget: null, activeRoom: startRoom, paused: false, started: false, elapsed: 0, hints: rules.hints, visited: new Set(startRoom ? [startRoom] : []), won: false, failed: false, energy: rules.startEnergy, sprinting: false, warnedLow: false, refillFlash: 0, refillAmount: 0 });
+    path = []; autoCollect = null; travelIntent = null; keys.clear(); guestBrain.reset();
     renderDirty = true; lastFrame = performance.now();
     state.nearbySnack = null; state.destination = null; announcedRoom = ''; renderer.resetView(); renderer.setFloor(state.player); rebuildNavigation(); renderFloorMap(); setText('conversation-status', '');
     $('overview-button').setAttribute('aria-pressed', 'false');
@@ -696,7 +811,7 @@
     $('dialog-close').hidden = false;
     discoverSnacks(); updateEnergyUI(); announceRoom(world.getRoom(state.player.x, state.player.y)); updateMap();
     syncMusic();
-    toast('Back on the couch. Ready for a run?', 'Grab a haul, then bring it back to the lounge before your energy runs out.', '⌂'); canvas.focus({ preventScroll: true });
+    toast('A fresh midnight snack run.', 'Gather munchies, head upstairs through Waffles’s clubhouse, then follow the Midnight hallway to your couch.', '☾'); canvas.focus({ preventScroll: true });
   }
   $('how-button').addEventListener('click', openHelp); $('pause-button').addEventListener('click', openPause); $('map-button').addEventListener('click', openMap); $('hint-button').addEventListener('click', hint); $('restart-button').addEventListener('click', restart); $('mobile-grab').addEventListener('click', interact); $('home-button').addEventListener('click', headHome);
   $('stairs-button').addEventListener('click', headForStairs);
@@ -739,7 +854,7 @@
   });
   document.querySelectorAll('[data-dir]').forEach(button => {
     const mapping = { up: 'w', down: 's', left: 'a', right: 'd' };
-    button.addEventListener('pointerdown', event => { if (state.paused) return; event.preventDefault(); button.setPointerCapture(event.pointerId); keys.add(mapping[button.dataset.dir]); path = []; autoCollect = null; begin(); });
+    button.addEventListener('pointerdown', event => { if (state.paused) return; event.preventDefault(); button.setPointerCapture(event.pointerId); keys.add(mapping[button.dataset.dir]); path = []; autoCollect = null; travelIntent = null; begin(); });
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(type, () => keys.delete(mapping[button.dataset.dir]));
   });
   new ResizeObserver(() => { renderer.resize(); renderDirty = true; }).observe(canvas);
@@ -806,25 +921,29 @@
       }
       spendEnergy(distanceMoved * distanceCost);
       if (state.energy <= 0) exhaust();
-      if (!state.failed) { wingSimulation.update(realDelta, state); handleWingEvents(); }
+      if (!state.failed) {
+        wingSimulation.update(realDelta, state); handleWingEvents();
+        stealthSimulation.update(realDelta, state, { distance: distanceMoved, sprinting: state.sprinting }); handleStealthEvents();
+      }
       discoverSnacks();
       if (!state.failed && !state.conversation && autoCollect && !unavailableSnacks.has(autoCollect.id) && autoCollect.level === state.level && state.discovered.has(autoCollect.id) && Math.hypot(autoCollect.x - state.player.x, autoCollect.y - state.player.y) <= world.collectionRadius) { const snack = autoCollect; path = []; collect(snack); }
       const room = world.getRoom(state.player.x, state.player.y); state.activeRoom = room?.id || null;
-      if (state.level !== 0 || room?.id !== world.home.room) state.leftHome = true;
+      if (state.level !== world.start.level || room?.id !== startRoom) state.leftHome = true;
       if (room) state.visited.add(room.id);
       announceRoom(room);
     } else { state.player.moving = false; state.sprinting = false; }
     state.nearHome = world.isHome(state.player.x, state.player.y);
     state.homeAvailable = state.leftHome && state.bag.length > 0;
     state.nearStairs = canUseStairs();
-    state.nearDoor = canUseDoor(); state.nearDog = canCallDog();
+    state.nearDoor = canUseDoor(); state.nearDog = canCallDog(); state.nearToy = canPlayToy();
     state.nearbySnack = !state.paused && !state.won && !state.failed && !state.conversation ? nearest() : null;
-    const atCouch = canFinishRun(), promptHidden = !state.conversation && !state.nearDog && !state.nearbySnack && !state.nearDoor && !state.nearStairs && !atCouch;
+    const atCouch = canFinishRun(), promptHidden = !state.conversation && !state.nearDog && !state.nearToy && !state.nearbySnack && !state.nearDoor && !state.nearStairs && !atCouch;
     if (promptNode.hidden !== promptHidden) promptNode.hidden = promptHidden;
-    if (!promptHidden) { const text = state.conversation ? `Mash E to escape · ${state.conversation.escapePresses}/${state.conversation.escapeRequired}` : state.nearDog ? state.wing.dog.sleeping ? 'Wake Waffles and guide him to dinner' : 'Call Waffles to follow you' : state.nearbySnack ? `Grab ${state.nearbySnack.name}` : state.nearDoor ? `Enter ${currentDoor().label}` : state.nearStairs ? state.level === 0 ? 'Go upstairs' : 'Go downstairs' : 'End run at couch & TV'; if (promptText.textContent !== text) promptText.textContent = text; }
-    const grabLabel = state.conversation ? 'MASH' : state.nearDog ? state.wing.dog.sleeping ? 'WAKE' : 'CALL' : state.nearbySnack ? 'GRAB' : state.nearDoor ? 'DOOR' : state.nearStairs ? 'STAIRS' : atCouch ? 'CHILL' : 'GRAB';
+    if (!promptHidden) { const text = state.conversation?.unskippable ? `Listen… ${Math.ceil(state.conversation.remaining)} seconds · no skipping` : state.conversation ? `Mash E to escape · ${state.conversation.escapePresses}/${state.conversation.escapeRequired}` : state.nearDog ? state.wing.dog.sleeping ? 'Wake Waffles and guide him to dinner' : ['sniffing', 'waiting'].includes(state.wing.dog.status) ? 'Coax Waffles to follow' : 'Call Waffles to follow you' : state.nearToy ? 'A squeaky break for Waffles · up to +25 energy' : state.nearbySnack ? `Grab ${state.nearbySnack.name}` : state.nearDoor ? `Enter ${currentDoor().label}` : state.nearStairs ? stairsAction() : 'End run at couch & TV'; if (promptText.textContent !== text) promptText.textContent = text; }
+    const grabLabel = state.conversation?.unskippable ? 'LISTEN' : state.conversation ? 'MASH' : state.nearDog ? state.wing.dog.sleeping ? 'WAKE' : 'CALL' : state.nearToy ? 'PLAY' : state.nearbySnack ? 'GRAB' : state.nearDoor ? 'DOOR' : state.nearStairs ? 'STAIRS' : atCouch ? 'CHILL' : 'GRAB';
     if (grabButtonText.textContent !== grabLabel) grabButtonText.textContent = grabLabel;
-    setAttribute(grabButton, 'aria-label', grabLabel === 'MASH' ? `Mash to escape, ${state.conversation.escapePresses} of ${state.conversation.escapeRequired} taps` : grabLabel === 'CALL' ? 'Call Waffles to follow you' : grabLabel === 'WAKE' ? 'Gently wake Waffles and lead him to dinner' : grabLabel === 'DOOR' ? `Enter ${currentDoor().label}` : grabLabel === 'STAIRS' ? state.level === 0 ? 'Go upstairs' : 'Go downstairs' : grabLabel === 'CHILL' ? 'End run at couch and TV' : 'Grab nearby snack');
+    if (grabButton.disabled !== (grabLabel === 'LISTEN')) grabButton.disabled = grabLabel === 'LISTEN';
+    setAttribute(grabButton, 'aria-label', grabLabel === 'LISTEN' ? `Listen for ${Math.ceil(state.conversation.remaining)} more seconds; this lecture cannot be skipped` : grabLabel === 'MASH' ? `Mash to escape, ${state.conversation.escapePresses} of ${state.conversation.escapeRequired} taps` : grabLabel === 'PLAY' ? 'Play with Waffles for up to 25 energy' : grabLabel === 'CALL' ? 'Coax Waffles to follow you' : grabLabel === 'WAKE' ? 'Gently wake Waffles and lead him to dinner' : grabLabel === 'DOOR' ? `Enter ${currentDoor().label}` : grabLabel === 'STAIRS' ? stairsAction() : grabLabel === 'CHILL' ? 'End run at couch and TV' : 'Grab nearby snack');
     state.destination = path.length ? path[path.length - 1] : null;
     updateEnergyUI(false, now);
     renderer.draw(state, now); renderDirty = false;
@@ -838,7 +957,8 @@
     consumedCount: state.consumedCount, bankedCount: state.bankedCount, haulCounts: { ...state.haulCounts },
     leftHome: state.leftHome, nearHome: state.nearHome, homeAvailable: state.homeAvailable, discovered: [...state.discovered],
     energy: state.energy, elapsed: state.elapsed, paused: state.paused,
-    wing: { taskCompleted: state.wing.taskCompleted, consumed: [...state.wing.consumed], dog: { x: state.wing.dog.x, y: state.wing.dog.y, energy: state.wing.dog.energy, status: state.wing.dog.status, following: state.wing.dog.following, happy: state.wing.dog.happy, sleeping: state.wing.dog.sleeping }, eater: { x: state.wing.eater.x, y: state.wing.eater.y, status: state.wing.eater.status, activated: state.wing.eater.activated } },
+    stealth: { noise: state.stealth.noise, mode: state.stealth.mode, safe: state.stealth.safe, masking: state.stealth.masking, resident: { x: state.stealth.resident.x, y: state.stealth.resident.y, status: state.stealth.resident.status, sleeping: state.stealth.resident.sleeping } },
+    wing: { taskCompleted: state.wing.taskCompleted, toy: state.wing.toy ? { used: state.wing.toy.used } : null, consumed: [...state.wing.consumed], dog: { level: state.wing.dog.level, x: state.wing.dog.x, y: state.wing.dog.y, energy: state.wing.dog.energy, status: state.wing.dog.status, following: state.wing.dog.following, happy: state.wing.dog.happy, sleeping: state.wing.dog.sleeping }, eater: { x: state.wing.eater.x, y: state.wing.eater.y, status: state.wing.eater.status, activated: state.wing.eater.activated } },
     hints: state.hints, room: state.activeRoom, won: state.won, failed: state.failed
   }), worldToScreen: (x, y, z = 0) => renderer.worldToScreen(x, y, z) };
   requestAnimationFrame(frame);

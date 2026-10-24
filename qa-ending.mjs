@@ -30,7 +30,7 @@ function readyToBank(options = {}) {
     if (selected.length === 2) break;
   }
   assert.equal(selected.length, 2, 'fixture banks two distinct snack kinds');
-  Object.assign(qa.state.player, { x: world.home.x, y: world.home.y }); run.stepFrame(100);
+  qa.changeFloor(world.home.level, world.home); run.stepFrame(100);
   assert.equal(qa.canFinishRun(), true, 'fixture meets the real leave-home, haul and couch guards');
   return { run, selected };
 }
@@ -40,6 +40,15 @@ function startEnding(options) {
   return fixture;
 }
 function key(run, value) { run.dispatch('window', 'keydown', { key: value, repeat: false, target: { closest: () => null }, preventDefault() {} }); run.dispatch('window', 'keyup', { key: value }); }
+function assertResultStats(run, { collected, carried, time }) {
+  const text = run.getNode('dialog-content').innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const [label, value] of [['TOTAL COLLECTED', collected], ['CARRIED TO COUCH', carried], ['SCORE', carried], ['RUN TIME', time]]) {
+    assert.match(text, new RegExp(`(?:^|\\s)${value}\\s+${label}(?:\\s|$)`), `${label} reports the run’s actual result`);
+  }
+  assert.doesNotMatch(text, /\benergy\s+(?:left|remaining)\b/i, 'the final screen has no energy-left metric');
+  assert.doesNotMatch(text, /\d+(?:\.\d+)?\s*%/, 'the final screen has no leftover energy percentage');
+  return text;
+}
 
 const html = fs.readFileSync(path.join(projectRoot, 'dist/index.html'), 'utf8');
 const videoTag = html.match(/<video\b[^>]*\bid="lounge-tv-video"[^>]*>/)?.[0] || '';
@@ -81,6 +90,7 @@ assert.equal(qa.state.ending.active, false);
 assert.equal(qa.state.ending.seated, true);
 assert.equal(qa.state.ending.tvOn, true);
 assert.equal(getNode('game-dialog').open, true, 'result dialog opens after the cinematic');
+assertResultStats(run, { collected: 2, carried: 2, time: '00:00' });
 assert.equal(video.paused, true, 'result modal pauses video decoding');
 assert.equal(qa.state.energy, frozen.energy, 'ending never drains gameplay energy');
 assert.equal(qa.state.elapsed, frozen.elapsed, 'ending never adds survival time');
@@ -156,16 +166,36 @@ for (const [width, height] of [[390, 844], [360, 740]]) {
 }
 console.log('PASS: portrait montage frames the readable TV at three seconds, eating at six, and both subjects at nine');
 
-const skipping = startEnding().run;
+const skipping = readyToBank().run;
+skipping.qa.changeFloor(0, skipping.world.start);
+const extraSnack = skipping.world.snacks.find(snack => snack.level === 0 && !skipping.qa.state.found.has(snack.id));
+Object.assign(skipping.qa.state.player, safeApproach(skipping.world, extraSnack));
+skipping.qa.state.discovered.add(extraSnack.id); skipping.qa.collect(extraSnack);
+const refill = Math.min(...skipping.qa.state.bag.map(snack => snack.energy));
+skipping.qa.spendEnergy(refill);
+assert.equal(skipping.qa.state.consumedCount, 1, 'result fixture has actually eaten one collected snack');
+assert.equal(skipping.qa.state.found.size, 3);
+assert.equal(skipping.qa.state.bag.length, 2, 'the remaining haul differs from historical pickups');
+advance(skipping, 8.4);
+skipping.qa.changeFloor(skipping.world.home.level, skipping.world.home); skipping.stepFrame(100);
+assert.equal(skipping.qa.finishRun(), true);
+const resultTime = skipping.qa.state.elapsed;
+assert.equal(Math.floor(resultTime), 8, 'result fixture has visible gameplay time before the cinematic');
 advance(skipping, .2); skipping.dispatch('skip-ending', 'click'); await flushMedia();
 assert.equal(skipping.qa.state.ending.active, false, 'skip completes the sequence immediately');
 assert.equal(skipping.qa.state.ending.seated, true, 'skip lands on the seated pose');
 assert.equal(skipping.qa.state.ending.tvOn, true, 'skip lands on the TV-on pose');
 assert.equal(skipping.getNode('game-dialog').open, true, 'skip shows the banked result');
 assert.equal(JSON.parse(skipping.storage.get(recordKey)).score, 2, 'skip preserves the complete haul');
+const skippedResult = assertResultStats(skipping, { collected: 3, carried: 2, time: '00:08' });
 const skipWrites = skipping.metrics.storageWrites;
+skipping.qa.closeDialog(); advance(skipping, 5); await flushMedia();
+assert.equal(skipping.qa.state.elapsed, resultTime, 'lounging cannot add time to the final result');
 skipping.dispatch('skip-ending', 'click');
+assert.equal(skipping.getNode('game-dialog').open, true, 'View haul reopens the final result');
+assert.equal(assertResultStats(skipping, { collected: 3, carried: 2, time: '00:08' }), skippedResult, 'reopened results preserve historical pickups, frozen carried count, score and time');
 assert.equal(skipping.metrics.storageWrites, skipWrites, 'reopening the result cannot rebank the haul');
+console.log('PASS: final results distinguish collected, carried and scored food; skip/reopen preserve frozen time and omit energy-left metrics');
 
 const pausing = startEnding().run;
 advance(pausing, 2.3); await flushMedia();

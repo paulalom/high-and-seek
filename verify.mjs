@@ -13,17 +13,20 @@ assert.ok(world, 'world.js exposes HSWorld');
 const expectedSnackEnergy = { cookies: 22, chips: 19, nachos: 26, icecream: 21, soda: 16, pizza: 29, donut: 24, gummies: 22 };
 assert.deepEqual(Object.fromEntries(world.snackKinds.map(kind => [kind.id, kind.energy])), expectedSnackEnergy, 'declared snack energy uses the reduced full-value refill balance');
 assert.ok(world.width > 0 && world.height > 0, 'world has positive dimensions');
-assert.equal(world.floors.length, 3, 'mansion contains two floors and a separate ground-floor wing');
+assert.equal(world.floors.length, 4, 'mansion contains two floors, Snack & Paws and the Midnight Wing');
+assert.ok(!world.floors[0].stair, 'the ground-floor staircase has moved into the clubhouse');
+assert.equal(world.floors[1].stair.to, 2, 'upstairs descends into the wing');
+assert.equal(world.floors[2].stair.to, 1, 'the clubhouse staircase ascends upstairs');
 assert.equal(world.level, 0, 'standalone world starts downstairs');
-assert.equal(world.home.level, 0, 'only downstairs has the extraction couch');
+assert.equal(world.home.level, 3, 'the final extraction couch is in the Midnight Wing');
 assert.equal(world.rules.conversationRadius, 1.05, 'small talk needs close contact');
 assert.equal(world.rules.conversationDuration, 16, 'talk fallback lasts sixteen seconds');
 assert.equal(world.rules.conversationEscapePresses, 12, 'escape needs twelve presses');
 assert.equal(world.rules.conversationCooldown, 6, 'escaped players receive six seconds of breathing room');
-assert.ok(world.isHome(world.start.x, world.start.y, 0), 'player starts at home');
+assert.equal(world.isHome(world.start.x, world.start.y, 0), false, 'the run starts downstairs, separate from the final couch');
 assert.equal(world.isHome(world.home.x, world.home.y, 1), false, 'same coordinates upstairs cannot bank a haul');
-assert.ok(world.furniture.some(item => item.room === world.home.room && item.type === 'sofa'), 'starting room has a couch');
-assert.ok(world.furniture.some(item => item.room === world.home.room && item.type === 'television'), 'starting room has a television');
+assert.ok(world.floors[world.home.level].furniture.some(item => item.room === world.home.room && item.type === 'sofa'), 'final snug has a couch');
+assert.ok(world.floors[world.home.level].furniture.some(item => item.room === world.home.room && item.type === 'television'), 'final snug has a television');
 assert.equal(world.isWalkable(23.71369904661551, 1.3522738945204764, world.playerRadius, 1), false, 'party sofa closes the north-wall sliver that has no navigation-grid cell');
 
 const snacksReference = world.snacks, poolSizes = new Set(), spotCatalog = world.snackSpots;
@@ -42,7 +45,11 @@ for (let trial = 0; trial < 24; trial++) {
   assert.ok(wing.length >= 10 && wing.length <= 16, 'the new wing has its own hidden snack supply');
   assert.equal(new Set(world.snacks.map(item => item.id)).size, world.snacks.length, 'pickup IDs are globally unique');
   assert.equal(new Set(world.snacks.map(item => `${item.level}:${item.x},${item.y}`)).size, world.snacks.length, 'pickups never overlap on the same floor');
-  assert.ok(downstairs.some(item => item.room === world.home.room), 'home has an onboarding snack');
+  assert.ok(downstairs.some(item => item.room === world.getRoom(world.start.x, world.start.y, 0).id), 'the starting room has an onboarding snack');
+  const midnight = world.snacks.filter(item => item.level === world.home.level);
+  assert.ok(midnight.length >= 14 && midnight.length <= 20, 'Midnight Wing has its own hidden snack supply');
+  assert.ok(midnight.filter(item => item.room === 'terrace').length >= 2, 'the optional terrace detour retains at least two real snack opportunities');
+  assert.equal(midnight.some(item => item.room === world.home.room), false, 'the final couch has no distracting pickup interaction');
   assert.ok(world.snacks.every(item => world.snackKinds.some(kind => kind.id === item.kind)), 'every pickup uses a declared snack kind');
   assert.ok(world.snacks.every(item => item.energy >= 16 && item.energy <= 29), 'smaller 16–29 energy refills make carried food part of the return budget');
   assert.ok(world.snacks.every(item => item.energy === world.snackKinds.find(kind => kind.id === item.kind).energy), 'spawned pickups retain their kind’s declared energy');
@@ -57,7 +64,7 @@ for (const floor of world.floors) {
   assert.equal(world.rooms, floor.rooms, 'activation supplies this floor’s rooms');
   assert.equal(world.furniture, floor.furniture, 'activation supplies this floor’s furniture');
   assert.equal(world.walls, floor.walls, 'activation supplies this floor’s walls');
-  assert.equal(floor.rooms.length, floor.id === 2 ? 3 : 6, 'each area has its intended room layout');
+  assert.equal(floor.rooms.length, floor.id === 3 ? 5 : floor.id === 2 ? 3 : 6, 'each area has its intended room layout');
   const roomIds = new Set(floor.rooms.map(room => room.id));
   assert.equal(roomIds.size, floor.rooms.length, 'room IDs are unique within a floor');
   const exits = [...(floor.stair ? [floor.stair] : []), ...(floor.doors || [])];
@@ -123,4 +130,4 @@ for (const floor of world.floors) {
 }
 assert.ok(world.guests.filter(item => item.level === 1).length >= 5, 'upstairs has at least five talkative guests');
 world.activateFloor(0);
-console.log(`PASS: two floors and the wing, smaller refills, variable hidden pools, valid guest routes; ${totalTargets} placements / ${totalPositions} walkable positions`);
+console.log(`PASS: two floors and both wings, smaller refills, variable hidden pools, valid guest routes; ${totalTargets} placements / ${totalPositions} walkable positions`);

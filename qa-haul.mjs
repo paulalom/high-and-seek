@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createGameHarness } from './qa-pathing.mjs';
+import { walkToHome } from './qa-route-helpers.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const recordKey = 'high-and-seek-best-haul-v2';
@@ -30,24 +31,29 @@ function leaveHome(run) {
   assert.equal(run.qa.state.leftHome, true, 'leaving the home room arms the return journey');
 }
 function arriveHome(run) {
-  if (run.qa.state.level !== 0) run.qa.changeFloor(0, run.world.start);
+  if (run.qa.state.level !== run.world.home.level) run.qa.changeFloor(run.world.home.level, run.world.home);
   run.qa.navigate(run.world.home.x, run.world.home.y);
   for (let frames = 0; run.qa.getPath().length && !run.qa.state.failed && frames++ < 4000; ) run.stepFrame();
   assert.ok(run.world.isHome(run.qa.state.player.x, run.qa.state.player.y), `return route reaches the couch zone: ${JSON.stringify({ player: run.qa.state.player, energy: run.qa.state.energy, failed: run.qa.state.failed, path: run.qa.getPath().length })}`);
+}
+function resultText(run) { return run.getNode('dialog-content').innerHTML.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); }
+function resultMetric(text, label, value) {
+  const escapedValue = String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(text, new RegExp(`(?:\\b${escapedValue}\\s+${label}\\b|\\b${label}\\s+${escapedValue}\\b)`, 'i'), `result shows ${label.toLowerCase()} as ${value}`);
 }
 
 const run = createGameHarness({ seed: 52 });
 const { qa, world, storage, getNode } = run;
 assert.equal(typeof qa.canFinishRun, 'function');
 assert.equal(typeof qa.finishRun, 'function');
-assert.ok(world.isHome(qa.state.player.x, qa.state.player.y), 'the run begins by the couch and TV');
+assert.equal(world.isHome(qa.state.player.x, qa.state.player.y), false, 'the run starts downstairs, away from the final couch');
 assert.equal(qa.canFinishRun(), false, 'empty starting haul cannot finish');
 assert.equal(qa.finishRun(), false, 'finish is guarded at the start');
 assert.equal(storage.has(recordKey), false, 'starting does not save a score');
 
-pickUp(run, world.snacks.find(snack => snack.room === world.home.room));
+pickUp(run, world.snacks.find(snack => snack.room === world.getRoom(world.start.x, world.start.y, 0).id));
 Object.assign(qa.state.player, { x: world.home.x, y: world.home.y });
-assert.equal(qa.finishRun(), false, 'collecting a home snack without leaving cannot bank a run');
+assert.equal(qa.finishRun(), false, 'a downstairs pickup cannot bank at matching final-couch coordinates');
 leaveHome(run);
 assert.equal(qa.canFinishRun(), false, 'being outside the couch zone blocks finishing');
 assert.equal(qa.finishRun(), false, 'finishing remotely is rejected');
@@ -79,15 +85,32 @@ assert.equal(qa.state.energy, world.rules.startEnergy, 'restart restores energy'
 assert.equal(qa.state.won, false, 'restart clears banked state');
 assert.equal(storage.get(recordKey), JSON.stringify(record), 'restart preserves the best banked record');
 leaveHome(run);
-pickUp(run, world.snacks.find(snack => snack.room !== world.home.room));
+for (const snack of world.snacks.filter(snack => snack.level === world.start.level).slice(0, 2)) pickUp(run, snack);
+assert.equal(qa.state.found.size, 2, 'failure fixture actually collects two munchies');
+run.stepFrame(17400);
 const recordBeforeFailure = storage.get(recordKey);
-qa.state.bag.length = 0; qa.state.haulCounts = {}; qa.state.consumedCount = qa.state.found.size;
-qa.state.energy = .01; run.stepFrame(100);
+const remainingFuel = qa.state.energy + qa.state.bag.reduce((sum, snack) => sum + snack.energy, 0);
+qa.spendEnergy(remainingFuel - .01);
+assert.equal(qa.state.bag.length, 0, 'the real automatic-eating path consumes the failure fixture food');
+assert.equal(qa.state.consumedCount, 2, 'consumed food remains part of historical collection');
+run.stepFrame(100);
 assert.equal(qa.state.failed, true, 'energy depletion ends an unbanked run');
+assert.equal(qa.state.found.size, 2, 'failure retains all historical pickups, including eaten food');
+assert.equal(qa.state.bankedCount, 0, 'an unsuccessful run carries no food to the couch');
+const failedTime = qa.state.elapsed, failedResult = resultText(run);
+assert.ok(failedTime >= 17 && failedTime < 18, 'the active failure fixture has a nonzero run time');
+resultMetric(failedResult, 'TOTAL COLLECTED', 2);
+resultMetric(failedResult, 'CARRIED TO COUCH', 0);
+resultMetric(failedResult, 'SCORE', 0);
+resultMetric(failedResult, 'RUN TIME', '00:17');
+assert.doesNotMatch(failedResult, /energy\s+(?:left|remaining)|\b\d+\s*%/i, 'failure results contain no energy-left metric or percentage');
+run.stepFrame(5000);
+assert.equal(qa.state.elapsed, failedTime, 'failure freezes the reported run time');
+assert.equal(resultText(run), failedResult, 'failure metrics remain stable while the result stays open');
 Object.assign(qa.state.player, { x: world.home.x, y: world.home.y });
 assert.equal(qa.finishRun(), false, 'an exhausted player cannot bank a haul');
 assert.equal(storage.get(recordKey), recordBeforeFailure, 'lost stash does not overwrite the best banked record');
-console.log('PASS: depletion loses the unbanked haul without changing the saved score');
+console.log('PASS: depletion reports all collected food, zero carried/score, frozen time and no energy metric; saved score stays safe');
 
 const full = createGameHarness({ seed: 6 });
 leaveHome(full);
@@ -102,11 +125,13 @@ console.log('PASS: no fixed collect-all victory condition remains');
 for (const control of ['keyboard', 'touch']) {
   const interactive = createGameHarness({ seed: 33 });
   leaveHome(interactive);
-  for (const snack of interactive.world.snacks.filter(snack => snack.level === 0 && snack.room !== interactive.world.home.room).slice(0, 3)) pickUp(interactive, snack);
+  // This input/banking fixture carries a known real-food surplus for the longer
+  // couch journey and a possible six-second resident lecture along the way.
+  for (const snack of interactive.world.snacks.filter(snack => snack.level === 0 && snack.room !== interactive.world.home.room).slice(0, 8)) pickUp(interactive, snack);
   interactive.dispatch('home-button', 'click');
   assert.ok(interactive.qa.getPath().length, 'return button creates a walking route');
   assert.equal(interactive.qa.state.won, false, 'return button never banks a haul remotely');
-  for (let frames = 0; interactive.qa.getPath().length && frames++ < 4000; ) interactive.stepFrame();
+  walkToHome(interactive);
   assert.ok(interactive.world.isHome(interactive.qa.state.player.x, interactive.qa.state.player.y));
   assert.ok(interactive.qa.state.bag.length > 0, 'return fixture retains food after automatic refueling');
   assert.equal(interactive.qa.state.won, false, 'return-button arrival remains an active run');
@@ -120,7 +145,7 @@ function bankFixture(score, elapsed) {
   const scored = createGameHarness({ seed: 104, storage });
   leaveHome(scored);
   for (const snack of scored.world.snacks.slice(0, score)) pickUp(scored, snack);
-  Object.assign(scored.qa.state.player, { x: scored.world.home.x, y: scored.world.home.y });
+  scored.qa.changeFloor(scored.world.home.level, scored.world.home);
   scored.stepFrame(100); scored.qa.state.elapsed = elapsed;
   assert.equal(scored.qa.finishRun(), true);
   return JSON.parse(storage.get(recordKey));

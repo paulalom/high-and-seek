@@ -29,21 +29,26 @@ const run = createGameHarness({ guestBrainEnabled: false });
 run.qa.begin(); run.qa.state.guests = [];
 for (const frameMs of [1000 / 60, 1000]) for (const level of [0, 1]) {
   const floor = run.world.floors[level];
-  if (run.qa.state.level !== level) run.qa.changeFloor(level, floor.stair);
+  const exit = floor.stair || floor.doors[0];
+  if (run.qa.state.level !== level) run.qa.changeFloor(level, exit);
   const prop = floor.furniture.find(item => item.type === 'island');
   for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
     const corner = { x: prop.x + (sx > 0 ? prop.w : 0) + sx * .11, y: prop.y + (sy > 0 ? prop.h : 0) + sy * .11 };
     assert.ok(run.world.isWalkable(corner.x, corner.y), 'corner fixture starts in the new rounded clearance');
     Object.assign(run.qa.state.player, corner); run.qa.state.energy = run.world.rules.maxEnergy;
-    run.qa.navigate(floor.stair.x, floor.stair.y);
+    run.qa.navigate(exit.x, exit.y);
     assert.ok(run.qa.getPath().length, 'the rounded clearance connects safely to the navigation grid');
+    const landing = { ...run.qa.getPath().at(-1) };
+    assert.ok(run.world.isWalkable(landing.x, landing.y), 'transition route chooses a safe grid landing');
+    assert.ok(Math.hypot(landing.x - exit.x, landing.y - exit.y) <= exit.radius, 'grid landing lies within the physical exit interaction zone');
     for (let frame = 0; run.qa.getPath().length && !run.qa.state.failed && frame < 4000; frame++) {
       run.stepFrame(frameMs);
       assert.ok(run.world.isWalkable(run.qa.state.player.x, run.qa.state.player.y), 'navigation never cuts through a rounded solid');
     }
     assert.equal(run.qa.state.failed, false, 'corner route remains affordable');
-    near(run.qa.state.player.x, floor.stair.x, 'corner route reaches the gallery horizontally');
-    near(run.qa.state.player.y, floor.stair.y, 'corner route reaches the gallery vertically');
+    near(run.qa.state.player.x, landing.x, 'corner route reaches its safe exit waypoint horizontally');
+    near(run.qa.state.player.y, landing.y, 'corner route reaches its safe exit waypoint vertically');
+    assert.equal(floor.stair === exit ? run.qa.canUseStairs() : run.qa.canUseDoor(), true, 'corner route ends at a usable physical transition');
   }
 }
 console.log('PASS: sixteen corner-adjacent routes reach the gallery on both floors at sixty-fps and one-second frames');

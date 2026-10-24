@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createGameHarness } from './qa-pathing.mjs';
+import { walkToHome } from './qa-route-helpers.mjs';
 
 const near = (actual, expected, message, tolerance = .0001) => assert.ok(Math.abs(actual - expected) <= tolerance, `${message}: expected ${expected}, got ${actual}`);
 const advance = (harness, seconds) => {
@@ -101,7 +102,7 @@ assert.ok(qa.state.discovered.size < world.snacks.length, 'restart forgets previ
 assert.ok(world.snacks.some((item, i) => `${item.x},${item.y}` !== previousHides[i]), 'restart shuffles snack hiding spots');
 
 for (const item of world.snacks) {
-  const area = world.floors[item.level], hallway = area.stair || area.doors[0];
+  const area = world.floors[item.level], hallway = area.doors?.[0] || area.stair;
   assert.equal(world.getRoom(hallway.x, hallway.y, item.level), null, 'the area entrance is in its connecting hallway');
   assert.equal(world.canSeeSnack(item, { x: item.x, y: item.y, level: item.level }), true, 'nearby snack in its room is visible');
   assert.equal(world.canSeeSnack(item, { x: hallway.x, y: hallway.y, level: item.level }), false, 'snacks cannot be seen from the hallway');
@@ -139,7 +140,7 @@ near(suspended.qa.state.elapsed, frozenTime + .2, 'paused suspension does not co
 assert.equal(suspended.qa.state.failed, false, 'a suspended pause cannot exhaust the player');
 console.log('PASS: 90-second suspended animation before start and during pause never charges energy or hunt time');
 
-let lowestFinish = rules.maxEnergy, lowestDuringHunt = rules.maxEnergy, highestTime = 0;
+let lowestFinish = rules.maxEnergy, lowestDuringHunt = rules.maxEnergy, highestTime = 0, bankableTrips = 0, emptyTrips = 0;
 const searchSeconds = Number(process.argv[2] || process.env.QA_SEARCH_SECONDS) || 0;
 for (const frameMs of [1000 / 60, 1000]) for (let seed = 1; seed <= 8; seed++) {
   const run = createGameHarness({ frameMs, seed });
@@ -161,14 +162,23 @@ for (const frameMs of [1000 / 60, 1000]) for (let seed = 1; seed <= 8; seed++) {
     assert.ok(game.state.found.has(target.id), `seed ${seed}, ${frameMs}ms: ${target.id} reachable before energy runs out (energy ${game.state.energy})`);
   }
   assert.equal(game.state.won, false, 'looting a partial stash does not finish the run');
-  game.navigate(map.home.x, map.home.y);
-  for (let frames = 0; game.getPath().length && !game.state.failed && frames++ < 4000; ) {
-    run.stepFrame(); lowestDuringHunt = Math.min(lowestDuringHunt, game.state.energy);
-  }
+  walkToHome(run, { onFrame: () => { lowestDuringHunt = Math.min(lowestDuringHunt, game.state.energy); } });
   assert.ok(game.state.energy > 0, `seed ${seed} preserves enough energy to get home`);
   assert.equal(game.state.won, false, 'arrival home requires an explicit finish interaction');
-  assert.equal(game.finishRun(), true, `seed ${seed} banks a partial haul at ${frameMs}ms frames`);
-  assert.equal(game.state.won, true, 'resting at the couch finishes the haul');
+  const carried = game.state.bag.length;
+  assert.equal(game.state.found.size, 8, 'the fixed budget collected eight real downstairs snacks');
+  assert.equal(game.state.found.size, carried + game.state.consumedCount, 'each pickup is still carried or was eaten on the longer journey');
+  if (carried) {
+    bankableTrips++;
+    assert.equal(game.finishRun(), true, `seed ${seed} banks its remaining food at ${frameMs}ms frames`);
+    assert.equal(game.state.bankedCount, carried, 'the final couch scores only remaining food');
+  } else {
+    emptyTrips++;
+    assert.equal(game.canFinishRun(), false, 'food eaten while crossing the house cannot be banked');
+    assert.equal(game.finishRun(), false, 'an empty arrival keeps the living player exploring');
+    assert.equal(game.state.won, false, 'an empty arrival has no winning result');
+  }
   lowestFinish = Math.min(lowestFinish, game.state.energy); highestTime = Math.max(highestTime, game.state.elapsed);
 }
-console.log(`PASS: 16 seeded partial hauls return home at 60fps/1fps; minimum energy ${lowestDuringHunt.toFixed(1)}, minimum finish energy ${lowestFinish.toFixed(1)}, slowest run ${highestTime.toFixed(1)}s (${searchSeconds}s search per snack)`);
+assert.ok(bankableTrips > 0 && emptyTrips > 0, 'fixed-budget journeys exercise both retained food and the empty-arrival guard');
+console.log(`PASS: 16 seeded partial hauls reach the final couch alive; ${bankableTrips} bank, ${emptyTrips} need more food at 60fps/1fps; minimum energy ${lowestDuringHunt.toFixed(1)}, minimum finish energy ${lowestFinish.toFixed(1)}, slowest run ${highestTime.toFixed(1)}s (${searchSeconds}s search per snack)`);

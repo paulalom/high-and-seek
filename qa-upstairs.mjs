@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { createGameHarness } from './qa-pathing.mjs';
+import { walkToHome } from './qa-route-helpers.mjs';
 
 const testFrameMs = Number(process.argv[2]) || 1000 / 60;
-const gameHarness = options => createGameHarness({ frameMs: testFrameMs, ...options });
+// Isolate the upstairs guest's sixteen-second encounter rules here. The
+// resident's six-second lecture and real Midnight journeys have dedicated QA.
+const gameHarness = options => createGameHarness({ frameMs: testFrameMs, stealthSimulationEnabled: false, ...options });
 const near = (actual, expected, message, tolerance = .001) => assert.ok(Math.abs(actual - expected) <= tolerance, `${message}: expected ${expected}, got ${actual}`);
 function advance(run, seconds) { for (let i = 0, count = Math.ceil(seconds * 60); i < count; i++) run.stepFrame(seconds * 1000 / count); }
 function tap(run, control = 'e', repeat = false) {
@@ -24,13 +27,25 @@ function walkRoute(run, label, maxSeconds = 90) {
 }
 function goUp(run) {
   run.qa.headForStairs();
-  walkRoute(run, 'walk from couch to stairs');
-  assert.equal(run.qa.state.level, 0, 'walking to the stairs does not change floor');
+  walkRoute(run, 'walk from couch to the wing entrance');
+  assert.equal(run.qa.state.level, 0, 'walking to the wing never changes area automatically');
+  assert.equal(run.qa.canUseStairs(), false, 'the main mansion no longer has a staircase');
+  assert.equal(run.qa.canUseDoor(), true, 'the upstairs journey reaches the physical wing door');
+  run.qa.interact();
+  assert.equal(run.qa.state.level, 2, 'an explicit interaction enters Waffles’ wing first');
+  assert.ok(run.qa.getPath().length, 'the upstairs journey continues toward the clubhouse staircase');
+  walkRoute(run, 'walk from the wing entrance to clubhouse stairs');
+  assert.equal(run.qa.state.level, 2, 'walking to the clubhouse stairs still requires an explicit ascent');
   assert.equal(run.qa.canUseStairs(), true, 'stair approach enables an explicit interaction');
   run.qa.interact();
   assert.equal(run.qa.state.level, 1, 'E interaction enters upstairs');
   assert.equal(run.qa.state.player.level, 1, 'player and app agree on upstairs');
   assert.equal(run.world.level, 1, 'world activates upstairs collision surface');
+}
+function reachFinalCouch(run, label) {
+  const transitions = walkToHome(run);
+  assert.deepEqual(transitions, [[1, run.world.home.level]], label + ': upstairs connects directly to the Midnight Wing');
+  assert.equal(run.qa.state.won, false, 'the final couch interaction remains explicit');
 }
 
 const run = gameHarness({ seed: 41 }), { qa, world } = run;
@@ -116,12 +131,12 @@ near(qa.state.energy, naturalEnergy - world.rules.idleDrain * (duration + .05), 
 assert.ok(qa.state.talkCooldown > 5, 'natural ending also grants global immunity');
 console.log('PASS: chasing guests, blocked movement, continuous energy, pause, twelve distinct E/Space/mobile presses, ignored key-repeat, flat escape cost and six-second immunity');
 
-// This guard uses upstairs coordinates matching the home couch downstairs.
+// This guard uses upstairs coordinates matching the final Midnight Wing couch.
 qa.state.found.add(upstairs.id); qa.state.leftHome = true;
 qa.state.bag.push(upstairs); qa.state.haulCounts[upstairs.kind] = 1;
 Object.assign(qa.state.player, { x: world.home.x, y: world.home.y });
 assert.equal(qa.canFinishRun(), false, 'matching couch coordinates upstairs cannot finish a run');
-assert.equal(qa.finishRun(), false, 'banking is restricted to the downstairs couch');
+assert.equal(qa.finishRun(), false, 'banking is restricted to the final Midnight Wing couch');
 qa.restart();
 assert.equal(qa.state.level, 0, 'restart returns the app downstairs');
 assert.equal(qa.state.player.level, 0, 'restart returns the player downstairs');
@@ -146,38 +161,42 @@ assert.equal(slow.qa.state.energy, 0, 'excusing with less than four energy clamp
 assert.equal(slow.qa.state.failed, true, 'an unaffordable excuse ends the unbanked run');
 console.log('PASS: one-second frames cannot tunnel through a guest; an exhausted excuse fails the run');
 
-let minimumEnergy = 100, longestRun = 0;
+let minimumEnergy = 100, longestRun = 0, bankableTrips = 0;
+const emptyReturns = [];
+// The aligned wing entrances lengthen the route to the final couch. Nine real
+// pickups keep both positive-haul and empty-arrival cases in this route fixture.
 for (let seed = 1; seed <= 8; seed++) {
   const trip = gameHarness({ seed }), game = trip.qa, map = trip.world;
   goUp(trip);
   const candidates = map.snacks.filter(snack => snack.level === 1);
-  for (let pickup = 0; pickup < 8; pickup++) {
+  for (let pickup = 0; pickup < 9; pickup++) {
     candidates.sort((a, b) => Math.hypot(a.x - game.state.player.x, a.y - game.state.player.y) - Math.hypot(b.x - game.state.player.x, b.y - game.state.player.y));
     const snack = candidates.shift(); game.navigate(snack.x, snack.y, snack);
     for (let frame = 0; !game.state.found.has(snack.id) && !game.state.failed && frame < 6000; frame++) {
       trip.stepFrame(); minimumEnergy = Math.min(minimumEnergy, game.state.energy);
       if (game.state.conversation) mashConversation(trip);
     }
-    assert.ok(game.state.found.has(snack.id), `seed ${seed} collects eight upstairs snacks without fixture refills`);
+    assert.ok(game.state.found.has(snack.id), `seed ${seed} collects nine upstairs snacks without fixture refills`);
   }
-  game.headHome(); walkRoute(trip, `seed ${seed} return to upstairs stair`);
-  assert.equal(game.state.level, 1, 'return button does not remotely descend');
-  assert.equal(game.state.won, false, 'upstairs return action does not bank the haul');
-  assert.equal(game.canUseStairs(), true, 'upstairs return route ends at usable stairs');
-  game.interact();
-  assert.equal(game.state.level, 0, 'explicit E descends');
-  game.headHome(); walkRoute(trip, `seed ${seed} walk downstairs to couch`);
-  assert.ok(map.isHome(game.state.player.x, game.state.player.y), 'second home route reaches downstairs couch');
-  assert.equal(game.state.won, false, 'return journey still needs explicit banking');
+  reachFinalCouch(trip, `seed ${seed} return`);
   const carriedHome = game.state.bag.length;
-  assert.ok(carriedHome > 0, 'return journey retains some food after automatic refueling');
-  assert.equal(game.finishRun(), true, `seed ${seed} banks its upstairs haul`);
-  assert.equal(game.state.found.size, 8, 'discovery history retains all eight pickups');
+  if (carriedHome > 0) {
+    bankableTrips++;
+    assert.equal(game.finishRun(), true, `seed ${seed} explicitly banks its remaining upstairs food`);
+  } else {
+    emptyReturns.push(seed);
+    assert.equal(game.canFinishRun(), false, `seed ${seed} cannot bank food already eaten on its return`);
+    assert.equal(game.finishRun(), false, 'returning empty-handed keeps the run active');
+    assert.equal(game.state.won, false, 'an empty return never awards a banked result');
+  }
+  assert.equal(game.state.found.size, 9, 'discovery history retains all nine pickups');
   assert.equal(game.state.bankedCount, carriedHome, 'score banks only food still carried home');
   assert.equal(game.state.bag.length + game.state.consumedCount, game.state.found.size, 'carried and eaten food reconcile to pickups');
   minimumEnergy = Math.min(minimumEnergy, game.state.energy); longestRun = Math.max(longestRun, game.state.elapsed);
 }
-console.log(`PASS: eight seeded upstairs eight-snack trips return and bank with active guests; minimum energy ${minimumEnergy.toFixed(1)}, longest ${longestRun.toFixed(1)}s`);
+assert.ok(bankableTrips > 0, 'some real nine-snack journeys preserve a positive bankable haul');
+assert.ok(emptyReturns.length > 0, 'some fixed nine-snack journeys exercise the empty-arrival scoring guard');
+console.log(`PASS: eight seeded upstairs nine-snack trips return alive; ${bankableTrips}/8 bank remaining food, empty returns [${emptyReturns.join(', ')}] cannot bank; minimum energy ${minimumEnergy.toFixed(1)}, longest ${longestRun.toFixed(1)}s`);
 
 const tour = gameHarness({ seed: 7 }), game = tour.qa, map = tour.world;
 goUp(tour);
@@ -195,9 +214,7 @@ while (remaining.length) {
   }
   assert.ok(game.state.found.has(snack.id), `full upstairs tour collects ${snack.id} without fixture refills`);
 }
-game.headHome(); walkRoute(tour, 'full upstairs tour return to stairs');
-assert.equal(game.canUseStairs(), true);
-game.interact(); game.headHome(); walkRoute(tour, 'full upstairs tour return to couch');
+reachFinalCouch(tour, 'full upstairs tour return');
 assert.equal(game.finishRun(), true, 'a full upstairs tour can still reach and bank at the couch');
 assert.equal(game.state.found.size, targetCount, 'full upstairs pickup history remains complete');
 assert.equal(game.state.bankedCount, game.state.bag.length, 'full tour banks only unconsumed food');
