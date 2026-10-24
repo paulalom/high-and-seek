@@ -29,7 +29,8 @@
   const unavailableSnacks = { has: id => state.found.has(id) || state.wing.consumed.has(id) };
   const dialog = $('game-dialog');
   const FRAME_INTERVAL = 1000 / 60, IDLE_INTERVAL = 1000 / 30, HUD_INTERVAL = 100, FRAME_EPSILON = .001;
-  let path = [], autoCollect = null, travelIntent = null, toastTimeout, roomTimeout, announcedRoom = startRoom, lastFrame = performance.now(), lastTick = null, lastHudUpdate = -Infinity, renderDirty = true, sound = false, audio;
+  let path = [], autoCollect = null, travelIntent = null, toastTimeout, roomTimeout, announcedRoom = startRoom, lastFrame = performance.now(), lastTick = null, lastHudUpdate = -Infinity, renderDirty = true, sound = true, audio;
+  let audioUnlock = null, audioVersion = 0, audioDisposed = false;
   let chatterRequest = 0;
   let lastMusicUpdate = -Infinity;
   let terraceMusic = false;
@@ -165,8 +166,7 @@
   toastTimeout = setTimeout(() => $('toast').classList.add('fade'), 6500);
 
   function chime(victory = false) {
-    if (!sound || !audio) return;
-    if (audio.state === 'suspended') audio.resume().catch(() => {});
+    if (!sound || !audio || audio.state !== 'running') return;
     const notes = victory ? [392, 494, 587, 784] : [523, 659, 784];
     notes.forEach((frequency, index) => {
       const oscillator = audio.createOscillator(), gain = audio.createGain(), start = audio.currentTime + index * .075;
@@ -182,13 +182,11 @@
   function speakConversation() {
     const conversation = state.conversation, request = ++chatterRequest;
     chatter.stop();
-    if (!sound || !audio || !conversation || state.paused || document.hidden || state.won || state.failed) return;
+    if (!sound || !audio || audio.state !== 'running' || !conversation || state.paused || document.hidden || state.won || state.failed) return;
     const speak = () => {
       if (request === chatterRequest && sound && state.conversation === conversation && !state.paused && !document.hidden && !state.won && !state.failed) chatter.speak(conversation.voiceId || conversation.guestId, conversation.line, conversation.lineIndex);
     };
-    if (audio.state === 'suspended') {
-      try { Promise.resolve(audio.resume()).then(speak).catch(() => {}); } catch { /* Speech remains optional if audio is blocked. */ }
-    } else speak();
+    speak();
   }
   function begin() { if (!state.won && !state.failed && !state.paused) { if (!state.started) lastFrame = performance.now(); state.started = true; renderDirty = true; } }
   function canFinishRun() { return state.level === world.home.level && state.started && !state.paused && !state.failed && !state.won && !state.conversation && state.energy > 0 && state.leftHome && state.bag.length > 0 && world.isHome(state.player.x, state.player.y, state.level); }
@@ -820,21 +818,52 @@
   $('ending-pause').addEventListener('click', toggleEndingPause);
   $('ending-restart').addEventListener('click', restart);
   $('tv-retry').addEventListener('click', () => { if (state.ending?.paused) toggleEndingPause(); playTV(); });
-  $('sound-button').addEventListener('click', () => {
-    sound = !sound;
-    if (sound && !audio) { const Context = window.AudioContext || window.webkitAudioContext; try { if (Context) audio = new Context(); else sound = false; } catch { sound = false; } }
-    chatter.setContext(audio || null); chatter.setEnabled(sound);
-    munching.setContext(audio || null); munching.setEnabled(sound);
-    music.setContext(audio || null); music.setEnabled(sound); syncMusic();
-    if (sound && audio?.state === 'suspended') { try { Promise.resolve(audio.resume()).then(() => syncMusic()).catch(() => {}); } catch { /* Sound remains optional if the browser blocks it. */ } }
-    if (!sound) { stopChatter(); stopChimes(); }
+  function updateSoundUI() {
     $('sound-button').setAttribute('aria-pressed', String(sound)); $('sound-button').querySelector('span').textContent = sound ? 'Sound on' : 'Sound off';
     $('sound-button').dataset.tip = sound ? 'Sound on' : 'Sound off';
     $('sound-button').querySelector('svg').innerHTML = `<path d="M11 5 6 9H3v6h3l5 4V5Z${sound ? 'm5 3c4 2 4 6 0 8m3-11c6 4 6 10 0 14' : 'm5 4 5 6m0-6-5 6'}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`;
-    chime();
-    if (sound) speakConversation();
+  }
+  function unlockSound() {
+    if (!sound || document.hidden || audioDisposed) return;
+    if (!audio) {
+      const Context = window.AudioContext || window.webkitAudioContext;
+      try { if (Context) audio = new Context(); } catch { /* Audio is optional. */ }
+      if (!audio) { sound = false; updateSoundUI(); return; }
+    }
+    const context = audio, version = audioVersion;
+    chatter.setContext(context); chatter.setEnabled(true);
+    munching.setContext(context); munching.setEnabled(true);
+    music.setContext(context); music.setEnabled(true);
+    const ready = () => {
+      if (audioDisposed || version !== audioVersion || context !== audio || !sound || document.hidden || context.state !== 'running') return;
+      syncMusic(); speakConversation();
+    };
+    if (context.state === 'running') { ready(); return; }
+    if (context.state !== 'suspended' || audioUnlock?.version === version) return;
+    const attempt = { version };
+    audioUnlock = attempt;
+    try {
+      Promise.resolve(context.resume()).then(() => {
+        if (audioUnlock === attempt) audioUnlock = null;
+        ready();
+      }).catch(() => { if (audioUnlock === attempt) audioUnlock = null; });
+    } catch { if (audioUnlock === attempt) audioUnlock = null; }
+  }
+  function unlockOnGesture(event) {
+    if (event.isTrusted === false || event.repeat || !sound || document.hidden || audioDisposed || audio?.state === 'running') return;
+    // A first click on mute must stay silent, including the phone's menu action.
+    if (event.target?.closest?.('#sound-button, [data-action="sound"]')) return;
+    unlockSound();
+  }
+  for (const type of ['pointerdown', 'keydown', 'click']) window.addEventListener(type, unlockOnGesture, true);
+  updateSoundUI();
+  $('sound-button').addEventListener('click', () => {
+    sound = !sound; audioVersion++;
+    updateSoundUI();
+    if (sound) { unlockSound(); chime(); }
+    else { chatter.setEnabled(false); munching.setEnabled(false); music.setEnabled(false); stopChatter(); stopChimes(); syncMusic(); }
   });
-  window.addEventListener('pagehide', event => { stopChatter(); stopChimes(); music.stop(); if (!event.persisted) { chatter.dispose(); munching.dispose(); music.dispose(); } stopTV(); });
+  window.addEventListener('pagehide', event => { audioVersion++; stopChatter(); stopChimes(); music.stop(); if (!event.persisted) { audioDisposed = true; chatter.dispose(); munching.dispose(); music.dispose(); } stopTV(); });
   window.addEventListener('pageshow', () => syncMusic());
   function zoomCamera(factor) { renderer.zoomBy(factor); renderDirty = true; $('overview-button').setAttribute('aria-pressed', 'false'); $('overview-button').setAttribute('aria-label', 'Show whole mansion'); }
   function toggleOverview() { const overview = renderer.toggleOverview(); renderDirty = true; $('overview-button').setAttribute('aria-pressed', String(overview)); $('overview-button').setAttribute('aria-label', overview ? 'Follow your character' : 'Show whole mansion'); }
