@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#abb892">
+  <meta name="description" content="Hunt hidden munchies across two mansion floors, dodge chatty guests, and bring your haul back to the lounge couch and TV.">
+  <title>High and Seek — The midnight munchie hunt</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="game-shell" aria-label="High and Seek game">
+    <div class="game-stage" id="game-stage">
+      <canvas id="mansion" tabindex="0" aria-label="Mansion game world with two floors and an attached Snack and Paws wing. Collect munchies into your bag. You automatically eat a bagged snack only when its whole energy refill fits. Return the uneaten munchies to the starting lounge couch and TV to score and end your run. WASD or arrow keys to move. Hold Shift to sprint at an extra energy cost. E or Space grabs food, uses nearby stairs, or banks your haul at the couch. Guests upstairs chase you: dodge them to avoid a 16-second conversation. If caught, tap E or Space 12 times to break away for 4 energy, or wait for the story to end. Holding a key does not count as extra taps. T walks to the stairs; press E there to change floors. R walks home on the ground floor, or to the downstairs staircase while upstairs. G walks to the wing doorway; E enters. In the wing, call Waffles with E and guide him to his food bowl in the pet kitchen. Click to explore; scroll to zoom."></canvas>
+      <div class="world-vignette" aria-hidden="true"></div>
+      <div class="hud" id="game-hud">
+        <header class="hud-top-left">
+          <div class="brand" aria-label="High and Seek"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M6 24C6 12 14 6 24 6s18 6 18 18c0 6-36 6-36 0Z" fill="#d9ed84" stroke="currentColor" stroke-width="2.4"/><path d="M19 29v10c0 5 10 5 10 0V29" fill="#f6f5ed" stroke="currentColor" stroke-width="2.4"/><ellipse cx="16" cy="18" rx="3" ry="4" fill="currentColor"/><ellipse cx="31" cy="16" rx="3" ry="4" fill="currentColor"/><path d="M21 23q4 4 8 0" fill="none" stroke="currentColor" stroke-width="2"/></svg><span>high<span class="brand-amp">&</span>seek</span><span class="after-hours">AFTER HOURS</span></div>
+          <section class="mission" aria-labelledby="mission-title"><div class="mission-star" aria-hidden="true">✦</div><div class="mission-copy"><span class="eyebrow">THE MUNCHIE RUN</span><h1 id="mission-title">One more munchie?</h1><p>Get greedy. Then get home.</p><div class="run-objective"><span aria-hidden="true">⌂</span><span id="mission-status">Bag munchies. Bring the uneaten ones home.</span></div></div><div class="mission-count"><strong id="found-count">0</strong><span>munchies</span></div></section>
+          <section class="energy-panel" id="energy-panel" data-level="good" aria-label="Energy"><div class="energy-heading"><span class="energy-title"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m11.5 1-8 10h6l-1 8 8-11h-6Z"/></svg> ENERGY</span><strong id="energy-value">100%</strong></div><div class="energy-track" id="energy-meter" role="meter" aria-label="Energy remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div id="energy-fill"></div></div><p><span id="energy-status">Bagged snacks refuel you</span><span class="energy-refill-note">AUTO-EAT · FULL REFILL</span></p></section>
+        <section class="dog-task" id="dog-task" aria-label="Waffles dinner task" hidden><span aria-hidden="true">🐾</span><div><strong id="dog-task-title">Waffles needs dinner</strong><p id="dog-task-status">Press E nearby. He will follow you.</p></div></section></header>
+        <div class="room-announcement show" id="room-announcement" aria-live="polite"><span class="estate-label" id="floor-label">GROUND FLOOR</span><span id="current-room">The Snack Lounge</span><span class="room-flourish" aria-hidden="true">— ✦ —</span></div>
+        <nav class="hud-top-right" aria-label="Game menu">
+          <div class="hunt-clock" title="Survival hunt time"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></svg><span id="timer">00:00</span><span class="clock-caption">STAY FUELED</span></div>
+          <button class="hud-button" id="how-button" aria-label="How to play" data-tip="How to play">?</button>
+          <button class="hud-button" id="sound-button" aria-label="Toggle music and game sound" aria-pressed="false" data-tip="Sound off"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 4 5 6m0-6-5 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="sr-only">Sound off</span></button>
+          <button class="hud-button" id="fullscreen-button" aria-label="Enter fullscreen" data-tip="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg></button>
+          <button class="hud-button pause-button" id="pause-button" aria-label="Pause game" data-tip="Pause · P"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6v12M16 6v12" stroke-width="3"/></svg></button>
+        </nav>
+        <div class="hud-bottom-left"><div class="exploration-status"><span class="explore-icon" aria-hidden="true">⌖</span><span><strong id="explored-count">1 / 15</strong> rooms explored</span></div><div class="route-controls"><button class="return-button" id="home-button" aria-label="Return to the lounge couch" title="Return to couch · R"><span class="return-house" aria-hidden="true">⌂</span><span><strong>Return to couch</strong><small id="return-status">COUCH & TV · STARTING ROOM</small></span><kbd>R</kbd></button><button class="stairs-button" id="stairs-button" aria-label="Walk to the stairs" title="Walk to stairs · T"><span class="stairs-icon" aria-hidden="true">↗</span><span><strong id="stairs-label">Head upstairs</strong><small id="stairs-status">MORE MUNCHIES · MORE COMPANY</small></span><kbd>T</kbd></button><button class="wing-button" id="wing-button" aria-label="Walk to the wing doorway" title="Wing doorway · G"><span class="wing-paw" aria-hidden="true">🐾</span><span><strong id="wing-label">Snack &amp; Paws wing</strong><small id="wing-status">A HUNGRY PUP NEEDS YOUR HELP</small></span><kbd>G</kbd></button></div><div class="control-guide"><div><span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span> move <span class="guide-dot">·</span><kbd>E</kbd> grab / use</div><span class="mouse-guide">Click to explore <span>·</span> Scroll to zoom</span></div><button class="subtle-button" id="restart-button" aria-label="Start a fresh run"><span aria-hidden="true">↻</span> Fresh run</button></div>
+        <section class="inventory" aria-label="Uneaten munchies in your bag"><div class="inventory-label"><span>YOUR BAG</span><span class="inventory-flourish">✦</span><span id="haul-state">UNBANKED</span></div><ul class="snack-list haul-list" id="snack-list" aria-label="Uneaten munchies in your bag"></ul><span class="stash-caption" id="stash-caption">Bring your uneaten munchies home to score.</span></section>
+        <div class="hud-bottom-right">
+          <div class="camera-controls" role="group" aria-label="Camera controls"><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button id="overview-button" aria-label="Show whole mansion" aria-pressed="false" title="Whole mansion · V"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m11-5v5h-5M9 12h6m-3-3v6"/></svg></button><button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button></div>
+          <button class="map-button" id="map-button" aria-label="Open mansion map" title="Mansion map · M"><span class="mini-map" id="mini-map" aria-hidden="true"><i data-room="library"></i><i data-room="kitchen"></i><i data-room="arcade"></i><i class="active home" data-room="lounge"></i><i data-room="foyer"></i><i data-room="conservatory"></i><b id="map-player"></b></span><span class="map-caption"><span id="map-floor-caption">GROUND FLOOR</span><kbd>M</kbd></span></button>
+          <button class="hint-button" id="hint-button" title="Use a hint · H"><span class="hint-symbol" aria-hidden="true">☼</span><span>Need a hint?</span><span class="hint-charges" id="hint-count">2</span><kbd>H</kbd></button><p class="sr-only" id="hint-description">Two hints. Make them count.</p>
+        </div>
+        <div class="toast" id="toast" role="status" aria-live="polite"><span id="toast-icon">⌂</span><div><strong id="toast-title">Your couch is the finish line.</strong><span id="toast-copy">Bag munchies. You eat one when its full refill fits. Bring the rest home to score.</span></div></div>
+        <div class="interact-prompt sr-only" id="interact-prompt" hidden><kbd>E</kbd><span>Grab a snack</span></div>
+        <p class="sr-only" id="conversation-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div class="mobile-pad" aria-label="Movement controls"><button data-dir="up" aria-label="Move up">↑</button><div><button data-dir="left" aria-label="Move left">←</button><button data-dir="down" aria-label="Move down">↓</button><button data-dir="right" aria-label="Move right">→</button></div></div>
+        <button class="mobile-grab" id="mobile-grab" aria-label="Grab nearby snack"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/></svg><span>GRAB</span></button>
+      </div>
+      <section class="ending-overlay" id="ending-overlay" aria-label="Couch and TV ending scene" hidden>
+        <div class="ending-letterbox ending-letterbox-top" aria-hidden="true"></div>
+        <div class="ending-letterbox ending-letterbox-bottom" aria-hidden="true"></div>
+        <div class="ending-controls"><button id="ending-pause" aria-label="Pause ending scene">Pause</button><button id="tv-retry" hidden>Play TV</button><button id="skip-ending">Skip scene</button><button id="ending-restart" hidden>Another run</button></div>
+        <div class="ending-caption" role="status" aria-live="polite"><span>THE GOOD LIFE</span><strong id="ending-caption">Home, at last.</strong><p id="ending-copy">A couch. A TV. A very well-earned snack.</p></div>
+      </section>
+      <video id="lounge-tv-video" src="assets/lounge-tv.mp4" preload="metadata" muted loop playsinline hidden aria-hidden="true"></video>
+    </div>
+    <span class="sr-only">Best banked haul: <strong id="best-time">—</strong></span>
+  </main>
+  <dialog id="game-dialog" aria-labelledby="dialog-title"><button class="dialog-close" id="dialog-close" aria-label="Close dialog">×</button><div id="dialog-content"></div></dialog>
+  <script src="world.js"></script><script src="renderer.js"></script><script src="guests.js"></script><script src="chatter.js"></script><script src="munching.js"></script><script src="music.js"></script><script src="wing.js"></script><script src="app.js"></script>
+</body>
+</html>
