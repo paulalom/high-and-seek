@@ -1,0 +1,193 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { FakeAudioContext } from './qa-audio-harness.mjs';
+import { createGameHarness } from './qa-pathing.mjs';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const names = ['lounge', 'tension', 'conversation', 'couch'];
+const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const close = (a, b, message, tolerance = .002) => assert.ok(Math.abs(a - b) <= tolerance, `${message}: ${a} vs ${b}`);
+const bytesFor = name => { const file = fs.readFileSync(path.join(root, 'dist/assets/music', `${name}.wav`)); return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength); };
+function inspectWav(name) {
+  const file = Buffer.from(bytesFor(name));
+  assert.equal(file.toString('ascii', 0, 4), 'RIFF'); assert.equal(file.toString('ascii', 8, 12), 'WAVE');
+  let format, data;
+  for (let offset = 12; offset + 8 <= file.length;) {
+    const id = file.toString('ascii', offset, offset + 4), length = file.readUInt32LE(offset + 4);
+    if (id === 'fmt ') format = file.subarray(offset + 8, offset + 8 + length);
+    if (id === 'data') data = file.subarray(offset + 8, offset + 8 + length);
+    offset += 8 + length + (length % 2);
+  }
+  assert.ok(format && data && data.length > 100000, `${name} is a substantial PCM loop`);
+  assert.equal(format.readUInt16LE(0), 1, 'music uses widely supported PCM');
+  assert.equal(format.readUInt16LE(2), 2, 'music is stereo');
+  assert.equal(format.readUInt32LE(4), 22050, 'music has a bounded sample rate');
+  assert.equal(format.readUInt16LE(14), 16, 'music uses sixteen-bit samples');
+  let sum = 0, squared = 0, peak = 0;
+  for (let offset = 0; offset < data.length; offset += 2) { const sample = data.readInt16LE(offset) / 32768; sum += sample; squared += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
+  const rms = Math.sqrt(squared / (data.length / 2));
+  assert.ok(rms > .005 && rms < .3, `${name} has audible, restrained RMS (${rms.toFixed(3)})`);
+  assert.ok(peak > .025 && peak < .98, `${name} has headroom (${peak.toFixed(3)})`);
+  assert.ok(Math.abs(sum / (data.length / 2)) < .01, `${name} has no large DC offset`);
+  for (let channel = 0; channel < 2; channel++) close(data.readInt16LE(channel * 2) / 32768, data.readInt16LE(data.length - 4 + channel * 2) / 32768, `${name} loops without a large sample jump`, .065);
+  return { frames: data.length / 4, rms, peak, data };
+}
+const assets = names.map(inspectWav);
+assert.ok(assets.every(asset => asset.frames === assets[0].frames), 'all stems share exactly the same loop length');
+close(assets[0].frames / 22050, 16 * 60 / 88, 'loops contain four bars at eighty-eight BPM');
+assert.equal(new Set(assets.map(asset => asset.data.toString('base64'))).size, 4, 'all four musical arrangements have distinct audio');
+console.log(`PASS: four original synchronized PCM loops (${(assets[0].frames / 22050).toFixed(3)}s), safe levels, headroom and seam checks`);
+
+function makeFetch({ deferred = false, fail = false } = {}) {
+  const calls = [], pending = [];
+  const fetch = (input, options = {}) => {
+    const name = path.basename(new URL(String(input), 'http://127.0.0.1:4173/').pathname, '.wav');
+    assert.ok(names.includes(name), 'only bundled soundtrack files are requested');
+    calls.push({ name, signal: options.signal });
+    const response = () => ({ ok: !fail, status: fail ? 503 : 200, arrayBuffer: async () => bytesFor(name) });
+    if (!deferred) return Promise.resolve(response());
+    return new Promise(resolve => pending.push(() => resolve(response())));
+  };
+  return { fetch, calls, release() { for (const resolve of pending.splice(0)) resolve(); } };
+}
+function harness(options) {
+  const network = makeFetch(options), sandbox = { window: {}, document: { baseURI: 'http://127.0.0.1:4173/' }, URL, AbortController, fetch: network.fetch, console };
+  vm.createContext(sandbox); vm.runInContext(fs.readFileSync(path.join(root, 'dist/music.js'), 'utf8'), sandbox);
+  const context = new FakeAudioContext(), music = sandbox.window.HSMusic.create();
+  return { music, context, network };
+}
+const normal = harness(), { music, context, network } = normal;
+music.update({ mode: 'lounge', threat: 0, duck: false }); await flush();
+assert.equal(network.calls.length, 0, 'loading the game does not fetch music while sound is off');
+music.setContext(context); music.update({ mode: 'lounge' }); await flush();
+assert.equal(network.calls.length, 0, 'providing a shared context does not enable sound');
+music.setEnabled(true); music.update({ mode: 'lounge', threat: 0, duck: false }); await flush();
+assert.equal(network.calls.length, 4, 'one explicit sound activation loads the four local arrangements');
+assert.equal(context.decodeCalls, 4, 'each loop decodes once');
+assert.equal(music.getDebug().ready, true); assert.equal(music.getDebug().playing, true);
+assert.equal(music.getDebug().activeSources, 4, 'one synchronized source per loop remains bounded');
+assert.ok(music.getDebug().activeNodes <= 12, 'music uses a small audio graph');
+const firstSources = context.sources.slice(), sourceCount = context.sources.length, nodeCount = context.nodes.length;
+assert.ok(firstSources.every(source => source.loop === true), 'music loops through Web Audio without timer scheduling');
+assert.equal(new Set(firstSources.map(source => source.started)).size, 1, 'stems start on one shared audio-clock boundary');
+assert.equal(new Set(firstSources.map(source => source.offset)).size, 1, 'stems share the same phase');
+for (let i = 0; i < 1000; i++) music.update({ mode: 'upstairs', threat: i / 1000, duck: false });
+assert.equal(context.sources.length, sourceCount, 'frame updates and threat changes do not restart the soundtrack');
+assert.equal(context.nodes.length, nodeCount, 'frame updates allocate no extra audio nodes');
+const danger = music.getDebug();
+assert.equal(danger.mode, 'upstairs'); assert.ok(danger.targets.tension > 0, 'upstairs adds a tension layer');
+music.update({ mode: 'conversation', duck: true });
+const talking = music.getDebug();
+assert.equal(talking.mode, 'conversation'); assert.ok(talking.targets.conversation > 0, 'conversation selects the awkward lounge arrangement');
+assert.equal(talking.targets.tension, 0, 'conversation stops the chase percussion');
+music.update({ mode: 'couch', duck: false });
+assert.ok(music.getDebug().targets.couch > 0, 'the couch selects the warm resolved arrangement');
+assert.equal(context.sources.length, sourceCount, 'arrangement changes crossfade the existing synchronized loops');
+context.advance(4.25); music.update({ mode: 'silent' }); context.advance(0);
+assert.equal(music.getDebug().playing, false); assert.equal(context.pendingSources().length, 0, 'pause/hidden silence stops current and future music sources');
+assert.equal(music.getDebug().activeNodes, 0, 'silence releases the music graph');
+music.update({ mode: 'lounge' }); await flush();
+assert.equal(network.calls.length, 4, 'resuming reuses decoded buffers');
+assert.equal(music.getDebug().playing, true);
+assert.ok(context.sources.slice(sourceCount).every(source => source.offset > 4 && source.offset < 4.5), 'resuming preserves musical phase');
+music.setEnabled(false); context.advance(0);
+assert.equal(context.pendingSources().length, 0, 'mute immediately releases every loop');
+music.dispose(); assert.equal(context.closeCalls, 0, 'the music engine never closes the shared game context');
+assert.equal(music.getDebug().disposed, true);
+music.setEnabled(true); music.update({ mode: 'couch' }); await flush();
+assert.equal(context.pendingSources().length, 0, 'a disposed engine cannot revive');
+console.log('PASS: explicit audio activation, shared context, synchronized loops, adaptive gains, bounded updates, silence/resume/mute and disposal');
+
+const late = harness({ deferred: true }); late.music.setContext(late.context); late.music.setEnabled(true); late.music.update({ mode: 'lounge' });
+await flush(); assert.equal(late.network.calls.length, 4);
+late.music.setEnabled(false); late.network.release(); await flush();
+assert.equal(late.context.pendingSources().length, 0, 'late loading cannot revive muted music');
+late.music.dispose();
+const pausedLoad = harness({ deferred: true }); pausedLoad.music.setContext(pausedLoad.context); pausedLoad.music.setEnabled(true); pausedLoad.music.update({ mode: 'lounge' });
+await flush(); pausedLoad.music.update({ mode: 'silent' }); pausedLoad.network.release(); await flush();
+assert.equal(pausedLoad.context.pendingSources().length, 0, 'a completed load cannot play through a pause'); pausedLoad.music.dispose();
+const replaced = harness({ deferred: true }); replaced.music.setContext(replaced.context); replaced.music.setEnabled(true); replaced.music.update({ mode: 'lounge' }); await flush();
+const replacement = new FakeAudioContext(); replaced.music.setContext(replacement); replaced.music.update({ mode: 'couch' }); replaced.network.release(); await flush();
+assert.equal(replaced.context.pendingSources().length, 0, 'late decoding cannot play through an old context');
+assert.equal(replaced.music.getDebug().playing, true, 'the replacement context can load and play its own valid buffers');
+assert.equal(replacement.pendingSources().length, 4);
+assert.equal(replaced.context.closeCalls, 0, 'context replacement does not close someone else’s audio'); replaced.music.dispose();
+const broken = harness({ fail: true }); broken.music.setContext(broken.context); broken.music.setEnabled(true); broken.music.update({ mode: 'lounge' }); await flush();
+assert.equal(broken.music.getDebug().playing, false); assert.ok(broken.music.getDebug().error, 'failed music loads are observable without breaking gameplay'); broken.music.dispose();
+const suspended = harness(); suspended.context.state = 'suspended'; suspended.music.setContext(suspended.context); suspended.music.setEnabled(true); suspended.music.update({ mode: 'lounge' }); await flush();
+assert.equal(suspended.network.calls.length, 0, 'suspended audio does not request or schedule a stale soundtrack'); assert.equal(suspended.context.resumeCalls, 0, 'only the user-gesture app path can resume audio'); suspended.music.dispose();
+const disposedLoad = harness({ deferred: true }); disposedLoad.music.setContext(disposedLoad.context); disposedLoad.music.setEnabled(true); disposedLoad.music.update({ mode: 'lounge' }); await flush();
+disposedLoad.music.dispose(); disposedLoad.network.release(); await flush();
+assert.equal(disposedLoad.context.pendingSources().length, 0, 'late responses cannot revive a disposed engine');
+assert.equal(disposedLoad.music.getDebug().cachedBytes, 0, 'disposal releases decoded music memory');
+const retryNetwork = makeFetch(), retrySandbox = { window: {}, document: { baseURI: 'http://127.0.0.1:4173/' }, URL, AbortController, console };
+let rejectAssets = true;
+retrySandbox.fetch = (...args) => rejectAssets ? Promise.reject(new Error('Temporary network failure')) : retryNetwork.fetch(...args);
+vm.createContext(retrySandbox); vm.runInContext(fs.readFileSync(path.join(root, 'dist/music.js'), 'utf8'), retrySandbox);
+const retry = retrySandbox.window.HSMusic.create(), retryContext = new FakeAudioContext();
+retry.setContext(retryContext); retry.setEnabled(true); retry.update({ mode: 'lounge' }); await flush();
+assert.ok(retry.getDebug().error); rejectAssets = false; retry.setEnabled(false); retry.setEnabled(true); retry.update({ mode: 'lounge' }); await flush();
+assert.equal(retry.getDebug().playing, true, 'an explicit sound toggle retries a recovered asset load'); retry.dispose();
+console.log('PASS: blocked audio, late fetches, paused loads, replaced contexts and unavailable assets remain safe');
+
+const appNetwork = makeFetch(), contexts = [];
+class AppContext extends FakeAudioContext { constructor() { super(); contexts.push(this); } }
+const app = createGameHarness({ audioContextFactory: AppContext, musicFetch: appNetwork.fetch }), { qa, world } = app;
+assert.ok(qa.music, 'the actual application creates its music engine');
+assert.equal(contexts.length, 0); assert.equal(appNetwork.calls.length, 0, 'the application starts silent without downloads');
+app.dispatch('sound-button', 'click'); await flush(); app.stepFrame(); await flush();
+assert.equal(contexts.length, 1, 'sound unlock shares one game AudioContext with voices and effects');
+assert.equal(qa.music.getDebug().playing, true); assert.equal(qa.music.getDebug().mode, 'lounge');
+qa.begin(); qa.changeFloor(1, world.floors[1].stair); app.stepFrame();
+assert.equal(qa.music.getDebug().mode, 'upstairs', 'ascending selects the upstairs mix');
+const guest = qa.state.guests[0];
+Object.assign(qa.state.player, { x: guest.x, y: guest.y }); qa.state.talkCooldown = 0; qa.checkConversation(); app.stepFrame();
+assert.equal(qa.music.getDebug().mode, 'conversation', 'guest encounters select the talking arrangement');
+assert.ok(qa.music.getDebug().targets.conversation > 0);
+qa.openPause(); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().playing, false, 'pause silences music with the guest voice');
+qa.closeDialog(); app.stepFrame(); await flush();
+assert.equal(qa.music.getDebug().mode, 'conversation'); assert.equal(qa.music.getDebug().playing, true);
+app.document.hidden = true; app.dispatch('document', 'visibilitychange'); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().playing, false, 'hidden tabs stop soundtrack decoding');
+app.document.hidden = false; app.dispatch('document', 'visibilitychange'); qa.closeDialog(); app.stepFrame(); await flush();
+for (let i = 0; i < 12; i++) qa.interact(); app.stepFrame();
+assert.equal(qa.music.getDebug().mode, 'upstairs', 'escaping restores the exploration mix');
+qa.restart(); app.stepFrame();
+assert.equal(qa.music.getDebug().mode, 'lounge', 'a fresh run returns to the downstairs groove');
+assert.equal(contexts.length, 1, 'restart reuses the shared context');
+qa.state.started = true; qa.state.leftHome = true; qa.state.found.add(world.snacks[0].id);
+qa.state.bag.push(world.snacks[0]); qa.state.haulCounts[world.snacks[0].kind] = 1;
+Object.assign(qa.state.player, world.home); assert.equal(qa.finishRun(), true); app.stepFrame();
+assert.equal(qa.music.getDebug().mode, 'couch', 'the cinematic resolves to the couch arrangement despite gameplay being paused');
+app.dispatch('ending-pause', 'click'); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().playing, false, 'manual cinematic pause silences the music');
+app.dispatch('ending-pause', 'click'); app.stepFrame(); await flush();
+assert.equal(qa.music.getDebug().playing, true);
+app.dispatch('skip-ending', 'click'); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().playing, false, 'the results modal pauses the soundtrack');
+qa.closeDialog(); app.stepFrame(); await flush();
+assert.equal(qa.music.getDebug().mode, 'couch'); assert.equal(qa.music.getDebug().playing, true, 'enjoying the couch restores the satisfied groove');
+app.dispatch('sound-button', 'click'); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().playing, false, 'the existing sound button mutes music immediately');
+app.dispatch('window', 'pagehide', { persisted: false }); contexts[0].advance(0);
+assert.equal(qa.music.getDebug().activeSources, 0, 'page teardown releases soundtrack sources');
+assert.equal(contexts[0].closeCalls, 0); assert.equal(app.getPendingRaf(), 1, 'the soundtrack adds no animation loop');
+console.log('PASS: actual sound/floor/conversation/pause/hidden/restart/ending/result/mute/pagehide integration uses one shared context and animation loop');
+
+const fastNetwork = makeFetch(), fastContexts = [];
+class FastContext extends FakeAudioContext { constructor() { super(); fastContexts.push(this); } }
+const fast = createGameHarness({ frameMs: 1000 / 240, audioContextFactory: FastContext, musicFetch: fastNetwork.fetch });
+fast.dispatch('sound-button', 'click'); await flush(); fast.qa.begin(); fast.resetMetrics();
+const audioNodesBefore = fastContexts[0].nodes.length;
+for (let frame = 0; frame < 2400; frame++) { fast.stepFrame(); fastContexts[0].advance(1 / 240); }
+assert.ok(fast.metrics.draws >= 597 && fast.metrics.draws <= 601, 'music-on play remains capped at sixty fps on a 240Hz display');
+assert.equal(fast.getPendingRaf(), 1); assert.equal(fast.qa.music.getDebug().activeSources, 4);
+assert.equal(fastContexts[0].nodes.length, audioNodesBefore, 'ten seconds of normal playback create no recurring audio graphs');
+assert.ok(fast.metrics.domWrites < 700, 'music introduces no per-frame DOM churn');
+fast.dispatch('window', 'pagehide', { persisted: false }); fastContexts[0].advance(0);
+assert.equal(fastContexts[0].pendingSources().length, 0, 'the high-refresh fixture releases every sound source');
+console.log(`PASS: music-on sixty-fps play at 240Hz, one animation loop, stable audio graph and ${fast.metrics.domWrites} DOM writes over ten seconds`);

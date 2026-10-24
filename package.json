@@ -1,0 +1,7 @@
+{
+  "name": "high-and-seek",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "node server.mjs", "start": "node server.mjs", "test": "node verify.mjs && node qa-collision.mjs && node qa-rounded-navigation.mjs && node qa-pathing.mjs && node qa-camera.mjs && node qa-energy.mjs && node qa-autoeat.mjs && node qa-haul.mjs && node qa-upstairs.mjs && node qa-wing.mjs && node qa-guests.mjs && node qa-monologues.mjs && node qa-chatter.mjs && node qa-munching.mjs && node qa-music.mjs && node qa-ending.mjs && node qa-performance.mjs && node qa-render-perf.mjs" }
+}
