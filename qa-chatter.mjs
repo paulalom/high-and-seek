@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { FakeAudioContext } from './qa-audio-harness.mjs';
 import { createGameHarness } from './qa-pathing.mjs';
 
+const gesture = run => run.dispatch('window', 'pointerdown', { isTrusted: true, target: { closest: () => null } });
 const root = path.dirname(fileURLToPath(import.meta.url));
 const sandbox = { window: {}, console };
 vm.createContext(sandbox);
@@ -83,16 +84,24 @@ const createdContexts = [];
 class AppAudioContext extends FakeAudioContext { constructor() { super(); createdContexts.push(this); } }
 const run = createGameHarness({ audioContextFactory: AppAudioContext }), { qa, world } = run;
 assert.equal(createdContexts.length, 0, 'loading the game creates no AudioContext');
+assert.equal(run.getNode('sound-button').getAttribute('aria-pressed'), 'true', 'guest sound starts enabled');
+assert.equal(run.getNode('sound-button').querySelector('span').textContent, 'Sound on', 'the default sound label matches its enabled preference');
 qa.begin(); qa.changeFloor(1, world.floors[1].stair);
 const guest = qa.state.guests.find(person => person.id === 'filmBuff');
 Object.assign(qa.state.player, { x: guest.x, y: guest.y }); qa.state.talkCooldown = 0; qa.checkConversation();
 assert.ok(qa.state.conversation);
-assert.equal(createdContexts.length, 0, 'a muted conversation does not unlock audio by itself');
-run.dispatch('sound-button', 'click');
+assert.equal(createdContexts.length, 0, 'a programmatically entered conversation does not unlock audio by itself');
+const openingCursor = guest.monologueCursor;
+run.dispatch('window', 'keydown', { isTrusted: true, key: 'e', repeat: true, target: { closest: () => null }, preventDefault() {} });
+run.dispatch('window', 'pointerdown', { isTrusted: false, target: { closest: () => null } });
+assert.equal(createdContexts.length, 0, 'repeated keys and untrusted pointer events do not unlock guest audio');
+assert.equal(guest.monologueCursor, openingCursor, 'a repeated key does not advance the locked guest sentence');
+gesture(run);
 await Promise.resolve(); await Promise.resolve();
-assert.equal(createdContexts.length, 1, 'the sound gesture creates one shared context');
+assert.equal(createdContexts.length, 1, 'the first trusted gameplay gesture creates one shared context');
 const appContext = createdContexts[0];
-assert.ok(appContext.sources.some(source => source.kind === 'bufferSource'), 'enabling sound during a conversation starts guest chatter');
+assert.ok(appContext.sources.some(source => source.kind === 'bufferSource'), 'the first gesture starts the currently displayed guest sentence');
+assert.equal(guest.monologueCursor, openingCursor, 'unlocking sound does not skip to another sentence');
 const speechSources = () => appContext.sources.filter(source => source.kind === 'bufferSource');
 const cadence = world.rules.conversationLineDuration;
 const beforeAdvance = speechSources().length, previousPhrase = [...appContext.sources];
@@ -150,8 +159,8 @@ mashQA.begin(); mashQA.changeFloor(1, mashRun.world.floors[1].stair);
 const mashGuest = mashQA.state.guests.find(person => person.id === 'houseGuest');
 Object.assign(mashQA.state.player, { x: mashGuest.x, y: mashGuest.y }); mashQA.state.talkCooldown = 0;
 assert.equal(mashQA.checkConversation(), true);
-mashRun.dispatch('sound-button', 'click'); await Promise.resolve(); await Promise.resolve();
-// Let the toggle chime finish while the opening sentence remains active.
+gesture(mashRun); await Promise.resolve(); await Promise.resolve();
+// Give the opening sentence a partially elapsed timer before the first mash.
 mashContext.advance(.6); mashRun.stepFrame(600);
 const mashTap = (control, repeat = false) => {
   if (control === 'mobile') mashRun.dispatch('mobile-grab', 'click');
@@ -237,7 +246,7 @@ const delayed = createGameHarness({ audioContextFactory: DeferredContext });
 delayed.qa.begin(); delayed.qa.changeFloor(1, delayed.world.floors[1].stair);
 const delayedGuest = delayed.qa.state.guests[0];
 Object.assign(delayed.qa.state.player, { x: delayedGuest.x, y: delayedGuest.y }); delayed.qa.state.talkCooldown = 0; delayed.qa.checkConversation();
-delayed.dispatch('sound-button', 'click'); delayed.qa.openPause();
+gesture(delayed); delayed.qa.openPause();
 deferredContext.unlock(); await Promise.resolve(); await Promise.resolve();
 assert.equal(deferredContext.sources.filter(source => source.kind === 'bufferSource').length, 0, 'a late browser audio unlock cannot revive speech after pause');
 delayed.qa.closeDialog(); await Promise.resolve();
@@ -246,8 +255,34 @@ delayed.dispatch('window', 'pagehide', { persisted: false }); deferredContext.ad
 assert.equal(deferredContext.pendingSources().length, 0, 'page teardown releases both speech and pickup chimes');
 assert.equal(deferredContext.closeCalls, 0, 'speech teardown never closes the shared AudioContext');
 
+let mutedContextCount = 0;
+class NeverUnlockedContext extends FakeAudioContext { constructor() { super(); mutedContextCount++; } }
+const preMuted = createGameHarness({ audioContextFactory: NeverUnlockedContext });
+const muteTarget = { closest: () => preMuted.getNode('sound-button') };
+preMuted.dispatch('window', 'pointerdown', { isTrusted: true, target: muteTarget });
+preMuted.dispatch('window', 'click', { isTrusted: true, target: muteTarget });
+preMuted.dispatch('sound-button', 'click');
+assert.equal(preMuted.getNode('sound-button').getAttribute('aria-pressed'), 'false', 'the first sound-button click mutes the default preference');
+assert.equal(mutedContextCount, 0, 'muting before audio unlock creates no context or speech');
+preMuted.qa.begin(); preMuted.qa.changeFloor(1, preMuted.world.floors[1].stair);
+const preMutedGuest = preMuted.qa.state.guests[0];
+Object.assign(preMuted.qa.state.player, { x: preMutedGuest.x, y: preMutedGuest.y }); preMuted.qa.state.talkCooldown = 0; preMuted.qa.checkConversation();
+gesture(preMuted);
+assert.equal(mutedContextCount, 0, 'later gameplay gestures and a guest encounter honor the muted preference');
+
+const lateMuted = createGameHarness({ audioContextFactory: DeferredContext });
+lateMuted.qa.begin(); lateMuted.qa.changeFloor(1, lateMuted.world.floors[1].stair);
+const lateGuest = lateMuted.qa.state.guests[0];
+Object.assign(lateMuted.qa.state.player, { x: lateGuest.x, y: lateGuest.y }); lateMuted.qa.state.talkCooldown = 0; lateMuted.qa.checkConversation();
+gesture(lateMuted); lateMuted.dispatch('sound-button', 'click');
+deferredContext.unlock(); await Promise.resolve(); await Promise.resolve();
+assert.equal(deferredContext.sources.length, 0, 'late audio resume cannot revive guest speech after mute');
+assert.equal(lateMuted.getNode('sound-button').getAttribute('aria-pressed'), 'false', 'late resume preserves the user mute');
+gesture(lateMuted); assert.equal(deferredContext.sources.length, 0, 'a later gesture cannot bypass mute on an unlocked context');
+lateMuted.dispatch('window', 'pagehide', { persisted: false }); deferredContext.advance(0);
+
 class UnavailableContext { constructor() { throw new Error('Audio unavailable'); } }
 const unavailable = createGameHarness({ audioContextFactory: UnavailableContext });
-assert.doesNotThrow(() => unavailable.dispatch('sound-button', 'click'), 'unavailable browser audio leaves gameplay usable');
+assert.doesNotThrow(() => gesture(unavailable), 'unavailable browser audio leaves gameplay usable');
 assert.equal(unavailable.getNode('sound-button').getAttribute('aria-pressed'), 'false', 'unsupported audio keeps the toggle honestly off');
-console.log('PASS: late audio unlock cannot revive paused chatter; page teardown and unavailable audio are safe');
+console.log('PASS: mute before unlock stays silent, late resume respects pause/mute, and teardown/unavailable audio remain safe');

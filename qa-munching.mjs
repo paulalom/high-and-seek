@@ -68,17 +68,28 @@ function prepareEating(run) {
   assert.ok(approach, 'a real den snack has an eating approach');
   Object.assign(qa.state.wing.eater, approach, { target: snack.id, status: 'searching', eatTimer: 0, activated: true });
 }
+const mutedContexts = [];
+class MutedContext extends FakeAudioContext { constructor() { super(); mutedContexts.push(this); } }
+const muted = createGameHarness({ audioContextFactory: MutedContext });
+assert.equal(muted.getNode('sound-button').getAttribute('aria-pressed'), 'true', 'game sound begins enabled while browser audio remains locked');
+muted.dispatch('sound-button', 'click');
+prepareEating(muted);
+for (const type of ['pointerdown', 'keydown', 'click']) muted.dispatch('window', type, { isTrusted: true, key: 'Shift', pointerType: 'touch', target: { closest: () => null }, preventDefault() {} });
+for (let frame = 0; frame < 150; frame++) muted.stepFrame(20);
+assert.equal(mutedContexts.length, 0, 'muting before the first gesture keeps real Nico bites and later gameplay silent');
+assert.equal(muted.getNode('sound-button').getAttribute('aria-pressed'), 'false');
+muted.dispatch('window', 'pagehide', { persisted: false });
 for (const action of ['mute', 'pause', 'hidden', 'leave', 'restart', 'failure', 'pagehide']) {
   const contexts = [];
   class AppAudio extends FakeAudioContext { constructor() { super(); contexts.push(this); } }
   const run = createGameHarness({ audioContextFactory: AppAudio });
   assert.equal(contexts.length, 0, 'loading does not create audio');
   prepareEating(run);
-  run.dispatch('sound-button', 'click');
+  run.dispatch('window', 'pointerdown', { isTrusted: true, pointerType: 'mouse', target: { closest: () => null } });
   await Promise.resolve(); await Promise.resolve();
-  assert.equal(contexts.length, 1, 'the sound gesture creates a single context');
+  assert.equal(contexts.length, 1, 'the first gameplay gesture creates a single shared context');
   const audio = contexts[0];
-  audio.advance(1); // Let the sound-toggle confirmation chime finish first.
+  audio.advance(1);
   run.stepFrame(20); audio.advance(.02);
   assert.ok(audio.pendingSources().some(source => source.kind === 'bufferSource'), 'the actual Nico bite event plays a crunch through game sound');
   if (action === 'mute') run.dispatch('sound-button', 'click');
@@ -90,6 +101,13 @@ for (const action of ['mute', 'pause', 'hidden', 'leave', 'restart', 'failure', 
   if (action === 'pagehide') run.dispatch('window', 'pagehide', { persisted: false });
   audio.advance(0);
   assert.equal(audio.pendingSources().length, 0, `${action} cancels Nico's chewing immediately`);
+  if (action === 'mute') {
+    const mutedSourceCount = audio.sources.length;
+    for (const type of ['pointerdown', 'keydown', 'click']) run.dispatch('window', type, { isTrusted: true, key: 'Shift', pointerType: 'touch', target: { closest: () => null }, preventDefault() {} });
+    for (let frame = 0; frame < 150; frame++) { run.stepFrame(20); audio.advance(.02); }
+    assert.equal(audio.sources.length, mutedSourceCount, 'later gestures and Nico bites cannot undo a mute');
+    assert.equal(contexts.length, 1, 'muted gameplay never creates a replacement context');
+  }
   assert.equal(audio.closeCalls, 0, `${action} retains shared context ownership`);
 }
 console.log('PASS: actual bite events use the sound toggle and shared context; mute, pause, hidden, leaving, restart, failure and teardown cancel chewing');

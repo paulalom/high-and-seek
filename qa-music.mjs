@@ -10,6 +10,7 @@ import { createGameHarness } from './qa-pathing.mjs';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const names = ['lounge', 'snack', 'upstairs', 'midnight', 'midnight-rhythm', 'tension', 'conversation', 'couch'];
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const gesture = (run, type = 'pointerdown', details = {}) => run.dispatch('window', type, { isTrusted: true, repeat: false, key: 'Shift', pointerType: 'mouse', target: { closest: () => null }, preventDefault() {}, ...details });
 const close = (a, b, message, tolerance = .002) => assert.ok(Math.abs(a - b) <= tolerance, `${message}: ${a} vs ${b}`);
 // Verify the test clock itself before using it to judge interrupted ramps.
 const clockFixture = new FakeAudioContext(), clockGain = new FakeAudioParam(clockFixture, 'gain');
@@ -215,12 +216,73 @@ assert.ok(retry.getDebug().error); rejectAssets = false; retry.setEnabled(false)
 assert.equal(retry.getDebug().playing, true, 'an explicit sound toggle retries a recovered asset load'); retry.dispose(); retryContext.releaseBufferData();
 console.log('PASS: blocked audio, late fetches, paused loads, replaced contexts and unavailable assets remain safe');
 
+const clickNetwork = makeFetch({ deferred: true }), clickContexts = [];
+class ClickContext extends FakeAudioContext { constructor() { super(); clickContexts.push(this); } }
+const clickApp = createGameHarness({ audioContextFactory: ClickContext, musicFetch: clickNetwork.fetch });
+assert.equal(clickApp.getNode('sound-button').getAttribute('aria-pressed'), 'true');
+clickApp.document.hidden = true; gesture(clickApp, 'click'); await flush();
+assert.equal(clickContexts.length, 0, 'hidden interactions cannot create or download audio');
+assert.equal(clickNetwork.calls.length, 0);
+clickApp.document.hidden = false;
+gesture(clickApp, 'click'); await flush();
+assert.equal(clickContexts.length, 1, 'a trusted click can activate default-on audio without a preceding pointer event');
+assert.equal(clickNetwork.calls.length, names.length, 'only the first valid gesture requests the bundled score');
+for (const type of ['pointerdown', 'keydown', 'click']) gesture(clickApp, type);
+assert.equal(clickContexts.length, 1); assert.equal(clickNetwork.calls.length, names.length, 'later gestures do not duplicate music loading');
+clickApp.dispatch('window', 'pagehide', { persisted: false }); clickNetwork.release(); await flush();
+assert.equal(clickContexts[0].pendingSources().length, 0, 'late first-gesture downloads cannot survive teardown');
+clickContexts[0].releaseBufferData();
+
+for (const action of ['pause', 'hidden', 'pagehide']) {
+  const pendingNetwork = makeFetch(), waitingContexts = [];
+  class WaitingContext extends FakeAudioContext {
+    constructor() { super({ state: 'suspended' }); this.waiters = []; waitingContexts.push(this); }
+    resume() { this.resumeCalls++; return new Promise(resolve => this.waiters.push(resolve)); }
+    unlock() { this.state = 'running'; for (const resolve of this.waiters.splice(0)) resolve(); }
+  }
+  const waiting = createGameHarness({ audioContextFactory: WaitingContext, musicFetch: pendingNetwork.fetch });
+  waiting.qa.begin(); gesture(waiting); gesture(waiting, 'click');
+  assert.equal(waitingContexts.length, 1); assert.equal(waitingContexts[0].resumeCalls, 1, 'pointerdown and click share one pending browser resume');
+  assert.equal(pendingNetwork.calls.length, 0, 'a suspended context requests no music assets');
+  if (action === 'pause') waiting.qa.openPause();
+  if (action === 'hidden') { waiting.document.hidden = true; waiting.dispatch('document', 'visibilitychange'); }
+  if (action === 'pagehide') waiting.dispatch('window', 'pagehide', { persisted: false });
+  waitingContexts[0].unlock(); await flush();
+  assert.equal(pendingNetwork.calls.length, 0, `${action} prevents a late browser resume from downloading music`);
+  assert.equal(waitingContexts[0].pendingSources().length, 0, `${action} prevents late audio sources`);
+  if (action === 'pagehide') {
+    gesture(waiting); await flush();
+    assert.equal(waitingContexts.length, 1); assert.equal(waitingContexts[0].resumeCalls, 1, 'disposed pages cannot unlock audio again');
+  } else waiting.dispatch('window', 'pagehide', { persisted: false });
+  assert.equal(waitingContexts[0].closeCalls, 0); waitingContexts[0].releaseBufferData();
+}
+
+const recoveryNetwork = makeFetch(), recoveryContexts = [];
+class RecoveryContext extends FakeAudioContext { constructor() { super({ state: 'suspended', resumeError: true }); recoveryContexts.push(this); } }
+const recovery = createGameHarness({ audioContextFactory: RecoveryContext, musicFetch: recoveryNetwork.fetch });
+gesture(recovery, 'keydown'); await flush();
+assert.equal(recoveryContexts.length, 1); assert.equal(recoveryContexts[0].resumeCalls, 1);
+assert.equal(recoveryNetwork.calls.length, 0, 'a rejected resume leaves the soundtrack locked');
+for (let frame = 0; frame < 10; frame++) recovery.stepFrame();
+assert.equal(recoveryContexts[0].resumeCalls, 1, 'animation frames never retry browser activation');
+recoveryContexts[0].resumeError = false;
+gesture(recovery, 'click'); await flush();
+assert.equal(recoveryContexts.length, 1); assert.equal(recoveryContexts[0].resumeCalls, 2, 'a later real gesture retries the same context');
+assert.equal(recovery.qa.music.getDebug().playing, true, 'a recovered browser resume starts the default soundtrack');
+assert.equal(recoveryNetwork.calls.length, names.length);
+recovery.dispatch('window', 'pagehide', { persisted: false }); recoveryContexts[0].advance(0); recoveryContexts[0].releaseBufferData();
+console.log('PASS: default-on click/key activation, deduplicated resume, hidden/pause/teardown guards and later-gesture recovery without early asset downloads');
+
 const appNetwork = makeFetch(), contexts = [];
 class AppContext extends FakeAudioContext { constructor() { super(); contexts.push(this); } }
 const app = createGameHarness({ audioContextFactory: AppContext, musicFetch: appNetwork.fetch }), { qa, world } = app;
 assert.ok(qa.music, 'the actual application creates its music engine');
-assert.equal(contexts.length, 0); assert.equal(appNetwork.calls.length, 0, 'the application starts silent without downloads');
-app.dispatch('sound-button', 'click'); await flush(); app.stepFrame(); await flush();
+assert.equal(app.getNode('sound-button').getAttribute('aria-pressed'), 'true', 'sound is visibly enabled by default');
+assert.equal(app.getNode('sound-button').querySelector('span').textContent, 'Sound on');
+assert.equal(contexts.length, 0); assert.equal(appNetwork.calls.length, 0, 'default-on audio still waits for a gesture before creating or downloading anything');
+qa.begin(); app.stepFrame(); await flush();
+assert.equal(contexts.length, 0); assert.equal(appNetwork.calls.length, 0, 'programmatic gameplay cannot unlock browser audio');
+gesture(app, 'keydown'); await flush(); app.stepFrame(); await flush();
 assert.equal(contexts.length, 1, 'sound unlock shares one game AudioContext with voices and effects');
 assert.equal(qa.music.getDebug().playing, true); assert.equal(qa.music.getDebug().mode, 'lounge');
 qa.begin();
@@ -291,6 +353,11 @@ qa.closeDialog(); app.stepFrame(); await flush();
 assert.equal(qa.music.getDebug().mode, 'couch'); assert.equal(qa.music.getDebug().playing, true, 'enjoying the couch restores the satisfied groove');
 app.dispatch('sound-button', 'click'); contexts[0].advance(0);
 assert.equal(qa.music.getDebug().playing, false, 'the existing sound button mutes music immediately');
+const mutedSources = contexts[0].sources.length;
+for (const type of ['pointerdown', 'keydown', 'click']) gesture(app, type);
+app.stepFrame(); await flush();
+assert.equal(contexts.length, 1); assert.equal(contexts[0].sources.length, mutedSources, 'later gameplay gestures respect an explicit mute');
+assert.equal(qa.music.getDebug().playing, false);
 app.dispatch('window', 'pagehide', { persisted: false }); contexts[0].advance(0);
 assert.equal(qa.music.getDebug().activeSources, 0, 'page teardown releases soundtrack sources');
 assert.equal(contexts[0].closeCalls, 0); assert.equal(app.getPendingRaf(), 1, 'the soundtrack adds no animation loop');
@@ -300,7 +367,7 @@ console.log('PASS: all actual area modes, stable terrace doorway, snug/ending se
 const fastNetwork = makeFetch(), fastContexts = [];
 class FastContext extends FakeAudioContext { constructor() { super(); fastContexts.push(this); } }
 const fast = createGameHarness({ frameMs: 1000 / 240, audioContextFactory: FastContext, musicFetch: fastNetwork.fetch });
-fast.dispatch('sound-button', 'click'); await flush(); fast.qa.begin(); fast.resetMetrics();
+gesture(fast, 'pointerdown', { pointerType: 'touch' }); await flush(); fast.qa.begin(); fast.resetMetrics();
 const audioNodesBefore = fastContexts[0].nodes.length;
 for (let frame = 0; frame < 2400; frame++) { fast.stepFrame(); fastContexts[0].advance(1 / 240); }
 assert.ok(fast.metrics.draws >= 597 && fast.metrics.draws <= 601, 'music-on play remains capped at sixty fps on a 240Hz display');
